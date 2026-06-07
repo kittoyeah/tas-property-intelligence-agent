@@ -27,6 +27,7 @@ Base URL: `https://services.thelist.tas.gov.au/arcgis/rest/services/Public/Plann
 | **14** | TPS Code Overlay | Statewide (all TPS councils) | ✅ CONFIRMED | Flood, bushfire, heritage, landslip, coastal |
 | **15** | TPS General Overlay | Statewide (all TPS councils) | ✅ CONFIRMED | Specific area plans, local area objectives |
 | **13** | TPS Zones | Statewide (all TPS councils) | ✅ CONFIRMED | Planning zone for address |
+| **8** | Local Government Areas | Statewide | ✅ CONFIRMED | Council name + LGA code → KB retrieval filter |
 | 3 | Interim Planning Scheme Overlay | Kingborough only | ✅ Working | Kingborough-specific overlays (legacy, pre-TPS) |
 
 Other services tested:
@@ -76,6 +77,10 @@ Same pattern, `outFields=LPS,ZONE,ZONE_ABB,LPS_REF`
 
 Same pattern, `outFields=OV_TYPE,OV_NAME,OV_CAT,DESCRIPT,LPS,LPS_REF`
 
+### Step 4b — Query council LGA (Layer 8)
+
+Same pattern, `outFields=NAME,LGA_CODE`. Run in parallel with Steps 2–4.
+
 ### Step 5 — SES Flood Mapping (raster — supplementary)
 
 ```
@@ -101,7 +106,18 @@ GET /SES_FloodMapping/MapServer/identify
 
 ---
 
-## 5. Layer 14 — Field Schema
+## 5. Layer Field Schemas
+
+### Layer 8 — Local Government Areas
+
+| Field | Example | Meaning |
+|---|---|---|
+| `NAME` | `"Hobart"` | Council name — display to user |
+| `LGA_CODE` | `114` | Council ID — matches `LPS_NO` in theLIST, use as KB retrieval filter |
+
+**Why query Layer 8:** Available even on clean sites (no overlays). Tells agent which council's LPS to search in KB. Also `LGA_CODE` matches the Hobart LPS filter used in overlay distinct queries.
+
+### Layer 14 — TPS Code Overlays
 
 | Field | Example | Meaning |
 |---|---|---|
@@ -155,6 +171,7 @@ Layer 3 (interim scheme):
 
 Layer 14 + 15: **EMPTY — clean site** ✅
 Layer 13 (zone): `ZONE="General Residential"`, `LPS="Hobart LPS"`
+Layer 8 (LGA): `NAME="Hobart"`, `LGA_CODE=114`
 
 Clean address returns empty features array — this is the valid no-overlay result. Handle gracefully in UI.
 
