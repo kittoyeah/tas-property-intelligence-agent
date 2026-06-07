@@ -177,7 +177,37 @@ Clean address returns empty features array — this is the valid no-overlay resu
 
 ---
 
-## 8. Known API Errors Encountered
+## 8. Address Coverage + Guard Logic
+
+### Coverage
+
+| Area | Status | Notes |
+|---|---|---|
+| Hobart, Glenorchy, Launceston, Devonport, Burnie | ✅ Full | TPS — Layers 14/15/13 |
+| Most of Tasmania | ✅ Full | TPS statewide |
+| Kingborough | ⚠️ Partial | Still on Interim Planning Scheme — Layer 14/15 may return empty, falls back to Layer 3 |
+| Rural / no street address | ⚠️ Degraded | Nominatim may not geocode lot/plan numbers |
+| Outside Tasmania | ❌ Reject | Tasmania guard returns error |
+
+### Guard 1 — Tasmania bounding box (in `geocoder.py`)
+
+Reject if geocoded point outside:
+```python
+TAS_BBOX = {
+    "lat_min": -43.65, "lat_max": -39.57,
+    "lng_min": 143.82, "lng_max": 148.35
+}
+```
+
+### Guard 2 — Layer 8 empty (in `thelist.py`)
+
+If Layer 8 (LGA) returns no features → point in ocean or outside Tas administrative boundary → reject with "Address not found in Tasmania."
+
+### Kingborough fallback (in `thelist.py`)
+
+If Layer 14 returns empty AND Layer 8 `NAME` = "Kingborough" → retry overlay query on Layer 3 (Interim Planning Scheme Overlay). Surface warning in response: "Kingborough is transitioning to the Tasmanian Planning Scheme — overlay data may be incomplete."
+
+## 9. Known API Errors
 
 | Error | Root cause | Fix |
 |---|---|---|
