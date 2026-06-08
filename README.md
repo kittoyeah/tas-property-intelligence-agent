@@ -49,11 +49,14 @@ Edit `.env` and fill in:
 
 | Variable | Where to get it |
 |---|---|
-| `LLM_API_KEY` | [console.groq.com](https://console.groq.com) → API Keys (free) |
-| `VOYAGE_API_KEY` | Ask team lead (shared free tier) |
-| `MONGODB_URI` | Ask team lead (shared Atlas cluster, KB already indexed) |
+| `LLM_BASE_URL` | Leave as `https://api.groq.com/openai/v1` |
+| `LLM_API_KEY` | **Get your own free key** → [console.groq.com](https://console.groq.com) → sign up → API Keys → Create Key |
+| `LLM_MODEL` | Leave as `meta-llama/llama-4-scout-17b-16e-instruct` |
+| `VOYAGE_API_KEY` | **Ask Chris** — shared key, do not create a new one (shared free token quota) |
+| `MONGODB_URI` | **Ask Chris** — shared Atlas cluster with KB already indexed, saves you running the indexer |
+| `USE_MOCK_DATA` | Leave as `false` |
 
-Leave `LLM_BASE_URL` and `LLM_MODEL` as-is from `.env.example`.
+> **Groq signup takes ~30 seconds** — GitHub login works. Free tier is 30 req/min, no credit card needed.
 
 ### 5. Run
 
