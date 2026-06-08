@@ -150,25 +150,48 @@ Full detail → [Data Sources.md](../Data%20Sources.md)
 
 ---
 
+## Council Coverage
+
+Target 5 councils. Build KB pipeline with Hobart first — once pipeline works, remaining 4 = upload docs + reindex, no code changes.
+
+| Council | Scheme | Priority | Status |
+|---|---|---|---|
+| Hobart | TPS — Hobart LPS | 1 — build first | KB to index |
+| Glenorchy | TPS — Glenorchy LPS | 2 | KB to index |
+| Clarence | TPS — Clarence LPS | 3 | KB to index |
+| Launceston | TPS — Launceston LPS | 4 | KB to index |
+| Kingborough | Interim Planning Scheme | 5 — different layer (Layer 3) | KB to index + code fallback already planned |
+
+All 5 targeted for submission 14 Jun 2026.
+
+---
+
 ## Scope
 
 ### In (Slice 1 — ship by 14 Jun 2026)
-- Address input → geocode → theLIST overlay query
+- Address input → geocode → theLIST overlay query (Layers 8, 13, 14, 15)
 - Four overlays: flood, bushfire, heritage, landslip
 - Three modes: buyer, construction, DA owner
-- Plain English output with cited sources
+- Six intents: just checking / granny flat / extension / additional storey / new dwelling / outbuilding
+- Zone use table per intent (permitted / discretionary / prohibited)
+- Fee schedule per council (cited with year, link to source)
+- Plain English output — every claim cited to LPS clause, statute, or fee schedule
 - Graceful fallback if theLIST API unavailable
+- Kingborough fallback to Layer 3 (interim scheme)
+- 5 councils: Hobart (launch) → Glenorchy → Clarence → Launceston → Kingborough
 
-### Out (later slices)
-- Zone rules ("can I build X here?") — Slice 2
-- NCC compliance checking — Slice 3
-- Fee calculations
-- Per-council variations (Hobart vs Glenorchy differ)
-- Specific cost/time estimates (grounded data not available)
-- DA form pre-fill
-- Legal or engineering advice — ever
+### Out — never
+- Cost estimates without a cited source
+- Outcome predictions ("likely approved/refused")
+- Legal or engineering advice
 - Addresses outside Tasmania
-- State government systems — politically sensitive, avoid
+- State government systems — politically sensitive
+
+### Out — later slices
+- NCC compliance checking
+- DA form pre-fill
+- All 29 TPS councils
+- Mobile app
 
 ---
 
