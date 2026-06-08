@@ -1,11 +1,12 @@
 """
-retriever.py — query MongoDB Atlas Vector Search for relevant planning clauses
+retriever.py — query MongoDB Atlas for relevant planning clauses
 
-Requires Atlas Vector Search index named 'vector_index' on sitecheck.chunks.
-Create in Atlas UI after indexing (JSON config in indexer.py docstring).
+Primary:  Atlas $vectorSearch (semantic) — requires Voyage AI + vector index
+Fallback: MongoDB text/regex search on clause_ref + heading keywords
 """
 
 import os
+import re
 import voyageai
 from pymongo import MongoClient
 from dotenv import load_dotenv
@@ -29,6 +30,38 @@ def _embed_query(query: str) -> list[float]:
     return result.embeddings[0]
 
 
+def _keyword_search(
+    query: str,
+    council: str | None = None,
+    overlay_code: str | None = None,
+    top_k: int = DEFAULT_TOP_K,
+) -> list[dict]:
+    """Regex search on clause_ref, heading, and text — no embeddings needed."""
+    collection = _get_collection()
+
+    terms = [t for t in re.split(r"\s+", query.strip()) if len(t) > 2]
+    if not terms:
+        return []
+
+    # Match any term in clause_ref, heading, or text
+    regex_parts = [{"clause_ref": {"$regex": t, "$options": "i"}} for t in terms]
+    regex_parts += [{"heading": {"$regex": t, "$options": "i"}} for t in terms]
+    text_filter = {"$or": regex_parts}
+
+    council_filter = {}
+    if council:
+        council_filter = {"$or": [{"council": council}, {"council": "statewide"}]}
+    if overlay_code:
+        council_filter["overlay_code"] = overlay_code
+
+    mongo_filter = {"$and": [text_filter, council_filter]} if council_filter else text_filter
+
+    results = list(
+        collection.find(mongo_filter, {"_id": 0, "embedding": 0}).limit(top_k)
+    )
+    return results
+
+
 def retrieve(
     query: str,
     council: str | None = None,
@@ -36,73 +69,94 @@ def retrieve(
     top_k: int = DEFAULT_TOP_K,
 ) -> list[dict]:
     """
-    Semantic search over planning clauses.
+    Semantic search with keyword fallback.
 
-    Args:
-        query:        Natural language query or lps_ref (e.g. "C12.5.1" or "flood zone development")
-        council:      Filter to council (e.g. "Hobart") — also returns statewide docs
-        overlay_code: Filter to overlay (e.g. "Flood-Prone Areas Hazard Code")
-        top_k:        Number of results to return
-
-    Returns:
-        List of chunk dicts with text, clause_ref, source, score
+    Tries Atlas $vectorSearch first; falls back to keyword search if
+    Voyage AI is rate-limited or vector index not yet created.
     """
-    embedding = _embed_query(query)
-    collection = _get_collection()
+    try:
+        embedding = _embed_query(query)
+        collection = _get_collection()
 
-    # Build Atlas Vector Search pipeline
-    vector_search = {
-        "index": "vector_index",
-        "path": "embedding",
-        "queryVector": embedding,
-        "numCandidates": top_k * 10,
-        "limit": top_k,
-    }
+        vector_search = {
+            "index": "vector_index",
+            "path": "embedding",
+            "queryVector": embedding,
+            "numCandidates": top_k * 10,
+            "limit": top_k,
+        }
 
-    # Add metadata filters
-    filters = []
-    if council:
-        filters.append({"$or": [{"council": council}, {"council": "statewide"}]})
-    if overlay_code:
-        filters.append({"overlay_code": overlay_code})
-    if filters:
-        vector_search["filter"] = {"$and": filters} if len(filters) > 1 else filters[0]
+        filters = []
+        if council:
+            filters.append({"$or": [{"council": council}, {"council": "statewide"}]})
+        if overlay_code:
+            filters.append({"overlay_code": overlay_code})
+        if filters:
+            vector_search["filter"] = {"$and": filters} if len(filters) > 1 else filters[0]
 
-    pipeline = [
-        {"$vectorSearch": vector_search},
-        {"$project": {
-            "_id": 0,
-            "clause_ref": 1,
-            "heading": 1,
-            "text": 1,
-            "overlay_code": 1,
-            "clause_type": 1,
-            "council": 1,
-            "source": 1,
-            "score": {"$meta": "vectorSearchScore"},
-        }},
-    ]
+        pipeline = [
+            {"$vectorSearch": vector_search},
+            {"$project": {
+                "_id": 0,
+                "clause_ref": 1,
+                "heading": 1,
+                "text": 1,
+                "overlay_code": 1,
+                "clause_type": 1,
+                "council": 1,
+                "source": 1,
+                "score": {"$meta": "vectorSearchScore"},
+            }},
+        ]
 
-    results = list(collection.aggregate(pipeline))
-    return results
+        results = list(collection.aggregate(pipeline))
+        if results:
+            return results
+        # Vector search returned nothing — try keyword fallback
+        return _keyword_search(query, council, overlay_code, top_k)
+
+    except Exception:
+        # Voyage AI rate limit or no vector index — use keyword fallback
+        return _keyword_search(query, council, overlay_code, top_k)
 
 
 def retrieve_by_ref(lps_ref: str, council: str | None = None) -> list[dict]:
-    """Direct lookup by clause reference (e.g. 'C12.5.1' or 'HOB-C6.2.1')."""
-    collection = _get_collection()
-    query = {"clause_ref": lps_ref}
-    if council:
-        query = {"clause_ref": lps_ref, "$or": [{"council": council}, {"council": "statewide"}]}
+    """Direct lookup by clause reference.
 
-    results = list(collection.find(query, {"_id": 0, "embedding": 0}))
-    return results
+    Handles both HOB-C6.2.1 (theLIST format) and C6.2.1 (SPP format).
+    Also matches parent sections: HOB-C6.2.1 → C6, C6.2, C6.2.1
+    """
+    collection = _get_collection()
+
+    # Normalise: strip council prefix (HOB-, GCC-, etc.)
+    normalised = re.sub(r"^[A-Z]+-", "", lps_ref)
+
+    # Try exact match first, then prefix match (C6.2.1 → C6.2 → C6)
+    candidates = {lps_ref, normalised}
+    parts = normalised.split(".")
+    for i in range(len(parts), 0, -1):
+        candidates.add(".".join(parts[:i]))
+
+    council_filter: dict = {}
+    if council:
+        council_filter = {"$or": [{"council": council}, {"council": "statewide"}]}
+
+    mongo_filter: dict = {"clause_ref": {"$in": list(candidates)}}
+    if council_filter:
+        mongo_filter = {"$and": [mongo_filter, council_filter]}
+
+    return list(collection.find(mongo_filter, {"_id": 0, "embedding": 0}))
 
 
 if __name__ == "__main__":
-    # Quick test
     import json
-    print("Testing retriever...")
-    results = retrieve("flood zone development standards", council="Hobart", top_k=3)
+    print("Testing keyword fallback...")
+    results = _keyword_search("HOB-C6.2.1 heritage", council="Hobart", top_k=3)
     for r in results:
-        print(f"\n[{r['clause_ref']}] {r['heading'][:60]} (score: {r.get('score', 'N/A'):.3f})")
+        print(f"\n[{r['clause_ref']}] {r['heading'][:60]}")
         print(f"  {r['text'][:150]}...")
+
+    print("\nTesting retrieve_by_ref...")
+    results = retrieve_by_ref("HOB-C6.2.1")
+    for r in results:
+        print(f"\n[{r['clause_ref']}] {r['heading'][:60]}")
