@@ -62,6 +62,9 @@ def _keyword_search(
     return results
 
 
+VECTOR_SEARCH_ENABLED = os.getenv("VECTOR_SEARCH_ENABLED", "false").lower() == "true"
+
+
 def retrieve(
     query: str,
     council: str | None = None,
@@ -71,9 +74,12 @@ def retrieve(
     """
     Semantic search with keyword fallback.
 
-    Tries Atlas $vectorSearch first; falls back to keyword search if
-    Voyage AI is rate-limited or vector index not yet created.
+    Set VECTOR_SEARCH_ENABLED=true to use Voyage AI + Atlas $vectorSearch.
+    Default (false) = keyword only — zero Voyage AI token usage per query.
     """
+    if not VECTOR_SEARCH_ENABLED:
+        return _keyword_search(query, council, overlay_code, top_k)
+
     try:
         embedding = _embed_query(query)
         collection = _get_collection()
