@@ -36,15 +36,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BATCH_SIZE = 64
+BATCH_SIZE = 20   # ~6.6K tokens/batch, safely under 10K TPM
+RATE_LIMIT_SLEEP = 65  # 10K TPM free limit — 65s ensures < 10K/min
 EMBED_MODEL = "voyage-law-2"
 DB_NAME = "sitecheck"
 COLLECTION_NAME = "chunks"
 
 
 def embed_batch(vc: voyageai.Client, texts: list[str]) -> list[list[float]]:
-    result = vc.embed(texts, model=EMBED_MODEL, input_type="document")
-    return result.embeddings
+    for attempt in range(5):
+        try:
+            result = vc.embed(texts, model=EMBED_MODEL, input_type="document")
+            return result.embeddings
+        except voyageai.error.RateLimitError:
+            wait = RATE_LIMIT_SLEEP * (attempt + 1)
+            print(f"  Rate limit hit, sleeping {wait}s...")
+            time.sleep(wait)
+    raise RuntimeError("Voyage AI rate limit: max retries exceeded")
 
 
 def index_chunks(chunks_path: str, council_filter: str | None = None, dry_run: bool = False):
@@ -63,6 +71,16 @@ def index_chunks(chunks_path: str, council_filter: str | None = None, dry_run: b
         print(f"Filtered to council='{council_filter}' + statewide: {len(chunks)} chunks")
     else:
         print(f"Indexing all {len(chunks)} chunks")
+
+    # Resume: skip already-indexed clause_refs
+    existing = set(
+        doc["clause_ref"]
+        for doc in collection.find({}, {"clause_ref": 1, "_id": 0})
+    )
+    if existing:
+        before = len(chunks)
+        chunks = [c for c in chunks if c["clause_ref"] not in existing]
+        print(f"Resuming: skipping {before - len(chunks)} already indexed, {len(chunks)} remaining")
 
     if dry_run:
         print("Dry run — no writes.")
@@ -99,7 +117,7 @@ def index_chunks(chunks_path: str, council_filter: str | None = None, dry_run: b
         print(f"  Inserted {len(result.inserted_ids)} docs.")
 
         if i + BATCH_SIZE < total:
-            time.sleep(0.5)
+            time.sleep(RATE_LIMIT_SLEEP)
 
     print(f"Done. {inserted}/{total} chunks indexed into {DB_NAME}.{COLLECTION_NAME}.")
     print("Next: create Atlas Vector Search index in Atlas UI (see module docstring).")

@@ -120,7 +120,7 @@ def query_overlays(lat: float, lng: float) -> dict:
             "layer": LAYER_GENERAL_OVERLAYS,
         })
 
-    zone_features = _query_with_retry(LAYER_ZONES, lng, lat, "ZONE,ZONE_ABB,LPS,LPS_REF")
+    zone_features = _query_with_retry(LAYER_ZONES, lng, lat, "ZONE,ZONE_ABB,LPS,LPS_NO")
     zone = None
     if zone_features:
         z = zone_features[0]
@@ -128,7 +128,7 @@ def query_overlays(lat: float, lng: float) -> dict:
             "zone": z.get("ZONE"),
             "zone_abb": z.get("ZONE_ABB"),
             "lps": z.get("LPS"),
-            "lps_ref": z.get("LPS_REF"),
+            "lps_ref": z.get("LPS_NO"),  # Layer 13 uses LPS_NO not LPS_REF
         }
 
     kingborough_warning = (
