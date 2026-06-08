@@ -4,9 +4,44 @@ Technical reference for the SiteCheck system. All decisions finalised.
 
 ---
 
+## Two-Plan Strategy
+
+SiteCheck runs on two parallel stacks — same code, different backends via env vars.
+
+| Component | Plan A — Dev (free) | Plan B — Submission (Azure) |
+|---|---|---|
+| Frontend hosting | Vercel (free) | Azure Static Web Apps |
+| Backend | Railway (FastAPI, free tier) | Azure Functions (Python) |
+| LLM | OpenRouter :free → DeepSeek R1 | Azure OpenAI gpt-4o-mini |
+| Agent loop | Manual tool loop (OpenAI SDK) | Azure AI Foundry SDK |
+| Vector KB | Supabase pgvector | Azure AI Search (Foundry IQ) |
+| File storage | Supabase Storage | Azure Blob Storage |
+| Geocoder | Nominatim | Nominatim (unchanged) |
+| Live spatial data | theLIST ArcGIS REST | theLIST ArcGIS REST (unchanged) |
+
+**Swap mechanism — env vars only, no code changes:**
+
+```bash
+# Plan A (dev)
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=sk-or-...
+KB_BACKEND=supabase
+AGENT_BACKEND=manual
+
+# Plan B (submission)
+LLM_BASE_URL=https://{azure-resource}.openai.azure.com
+LLM_API_KEY=...
+KB_BACKEND=azure-search
+AGENT_BACKEND=foundry
+```
+
+**Why:** Azure AI Foundry quota pending. Dev proceeds on free cloud stack. Submission swaps to Azure to satisfy hackathon IQ layer requirement and target $5k "Best use of IQ tools" bonus prize.
+
+---
+
 ## Overview
 
-SiteCheck accepts a Tasmanian property address + user mode, resolves planning overlays via live spatial APIs, then uses an AI agent to produce plain-English planning interpretation cited to relevant LPS clauses.
+SiteCheck accepts a Tasmanian property address + user mode + intent, resolves planning overlays via live spatial APIs, then uses an AI agent to produce plain-English planning interpretation cited to relevant LPS clauses.
 
 ---
 
