@@ -61,8 +61,9 @@ Same tool, same data, same agent. Mode selected after address is entered.
 **Stakes:** $300–500k decision, information asymmetry is massive
 **Sample output:**
 > ⚠️ 2 things to know before you sign.
-> **Flood risk** — this block sits in a mapped flood zone. Some lenders won't finance flood-zoned land, insurance costs more, and any future build needs engineering sign-off. Ask your solicitor to flag this before settlement.
-> **Heritage area** — this street is in a local heritage area. You can still renovate and build, but designs need council approval.
+> **Flood risk** — this land is in a mapped flood zone (Hobart LPS C12.0). New structures require hydraulic assessment before council can assess any application.
+> **Heritage area** — this street is in a local heritage precinct (Hobart LPS HOB-C6.2.1). External alterations and new structures require a heritage impact statement.
+> *For cost and timeline advice, contact a building designer or heritage consultant.*
 
 ### Mode 2 — Construction / Tradie
 **Situation:** quoting or planning a job at a Tasmanian address
@@ -70,8 +71,9 @@ Same tool, same data, same agent. Mode selected after address is entered.
 **Stakes:** blown margins, mid-job surprises, wrong quote
 **Sample output:**
 > ⚠️ 2 things to factor into your quote.
-> **Flood overlay** — hydraulic engineer's report required before council will assess any new structure. Budget ~$2–4k and 3–4 weeks before you can even lodge.
-> **Heritage overlay** — heritage impact statement required. Add $1–3k and 6–8 weeks to your timeline.
+> **Flood overlay** — hydraulic engineer's report required before council will assess any new structure (Hobart LPS C12.0). Get this scoped before you price the job.
+> **Heritage overlay** — heritage impact statement required for any external works (Hobart LPS HOB-C6.2.1). Minimum 42 days statutory assessment period (LUPAA s.57).
+> *Contact a building designer for cost estimates — we don't quote on their behalf.*
 
 ### Mode 3 — DA Owner (Current Owner Planning to Build)
 **Situation:** own the property, planning to renovate or build, considering a DA
@@ -79,9 +81,11 @@ Same tool, same data, same agent. Mode selected after address is entered.
 **Stakes:** time, cost, application strategy
 **Sample output:**
 > ⚠️ Your DA will be discretionary — council must assess it.
-> **Why:** heritage overlay means your application can't be approved as permitted development.
-> **Expect:** 42+ days minimum, heritage impact statement, likely referral to Heritage Tasmania.
-> **Next step:** engage a building designer familiar with heritage assessments before lodging.
+> **Why:** heritage overlay means this application cannot be approved as permitted development (Hobart LPS HOB-C6.2.1).
+> **Statutory minimum:** 42 days assessment period (LUPAA s.57).
+> **Required:** heritage impact statement before lodging (Hobart LPS HOB-C6.2.1.3).
+> **Referral:** Heritage Tasmania referral triggered (SPP E6.0).
+> *Contact a heritage consultant or building designer before lodging.*
 
 ---
 
