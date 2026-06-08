@@ -87,15 +87,15 @@ Open **http://localhost:3001** (or 3000 if not taken).
 
 ## Stack
 
-| Component | Dev (free) | Submission (Azure) |
+| Component | Service | Tier |
 |---|---|---|
-| Frontend | Vercel | Azure Static Web Apps |
-| Backend | Railway (FastAPI) | Azure Functions |
-| LLM | Groq (Llama 4 Scout) | Azure OpenAI gpt-4o-mini |
-| Vector KB | MongoDB Atlas M0 | Azure AI Search |
-| Embeddings | Voyage AI voyage-law-2 | Azure AI Search built-in |
-
-Swap via env vars — `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`.
+| Frontend | Vercel | Free |
+| Backend | Railway (FastAPI) | Free |
+| LLM | Groq — Llama 4 Scout | Free (30 req/min) |
+| Vector KB | MongoDB Atlas | Free M0 (512MB) |
+| Embeddings | Voyage AI voyage-law-2 | Free (200M tokens) |
+| Geocoding | Nominatim / OSM | Free |
+| Spatial data | theLIST ArcGIS REST | Free (CC BY 3.0 AU) |
 
 ## Architecture
 

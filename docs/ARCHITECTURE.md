@@ -1,75 +1,51 @@
 # Architecture — SiteCheck: Tasmania Property Intelligence Agent
 
-Technical reference for the SiteCheck system. All decisions finalised.
-
 ---
 
-## Two-Plan Strategy
+## Stack
 
-SiteCheck runs on two parallel stacks — same code, different backends via env vars.
-
-| Component | Plan A — Dev (free) | Plan B — Submission (Azure) |
+| Component | Service | Tier |
 |---|---|---|
-| Frontend hosting | Vercel (free) | Azure Static Web Apps |
-| Backend | Railway (FastAPI, free tier) | Azure Functions (Python) |
-| LLM | OpenRouter :free → DeepSeek R1 | Azure OpenAI gpt-4o-mini |
-| Agent loop | Manual tool loop (OpenAI SDK) | Azure AI Foundry SDK |
-| Vector KB | Supabase pgvector | Azure AI Search (Foundry IQ) |
-| File storage | Supabase Storage | Azure Blob Storage |
-| Geocoder | Nominatim | Nominatim (unchanged) |
-| Live spatial data | theLIST ArcGIS REST | theLIST ArcGIS REST (unchanged) |
-
-**Swap mechanism — env vars only, no code changes:**
-
-```bash
-# Plan A (dev)
-LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_API_KEY=sk-or-...
-KB_BACKEND=supabase
-AGENT_BACKEND=manual
-
-# Plan B (submission)
-LLM_BASE_URL=https://{azure-resource}.openai.azure.com
-LLM_API_KEY=...
-KB_BACKEND=azure-search
-AGENT_BACKEND=foundry
-```
-
-**Why:** Azure AI Foundry quota pending. Dev proceeds on free cloud stack. Submission swaps to Azure to satisfy hackathon IQ layer requirement and target $5k "Best use of IQ tools" bonus prize.
-
----
-
-## Overview
-
-SiteCheck accepts a Tasmanian property address + user mode + intent, resolves planning overlays via live spatial APIs, then uses an AI agent to produce plain-English planning interpretation cited to relevant LPS clauses.
+| Frontend | Vercel (Next.js 16) | Free |
+| Backend | Railway (FastAPI) | Free |
+| LLM | Groq — Llama 4 Scout 17B | Free (30 req/min) |
+| Vector KB | MongoDB Atlas M0 | Free (512MB) |
+| Embeddings | Voyage AI voyage-law-2 | Free (200M tokens) |
+| Geocoding | Nominatim / OSM | Free |
+| Spatial data | theLIST ArcGIS REST | Free (CC BY 3.0 AU) |
 
 ---
 
 ## Data Flow
 
 ```
-User (Next.js UI)
+User (Next.js)
     |
-    | POST /api/analyze  { address, mode }
+    | POST /check  { address, mode, intent }
     v
-Azure Functions (Python)
-    |
-    |-- Nominatim (OpenStreetMap) ---------> lat/lng (WGS84)
-    |
-    |-- theLIST ArcGIS REST
-    |     Layer 14: code overlays   -------> overlay CODEs + OV_NAMEs + LPS_REFs
-    |     Layer 15: general overlays
-    |     Layer 13: zone            -------> zone name
+FastAPI (Railway)
     |
     v
-Azure AI Foundry Agent
+Agent tool loop
+    |-- geocode_address()  →  Nominatim → lat/lng
     |
-    |-- Foundry IQ (Azure AI Search) ------> planning clauses (lookup by LPS_REF)
-    |
-    |-- Azure OpenAI gpt-4o-mini ----------> plain-English interpretation + citations
+    |-- query_overlays()   →  theLIST ArcGIS REST
+    |     Layer 8:  LGA (council name)
+    |     Layer 13: Zone
+    |     Layer 14: Code overlays  → lps_ref (e.g. HOB-C6.2.1)
+    |     Layer 15: General overlays
     |
     v
-Azure Functions returns JSON response
+KB enrichment
+    |-- retrieve_by_ref(lps_ref) → MongoDB Atlas (keyword search)
+    |-- retrieve(query)          → Atlas $vectorSearch (when index active)
+    |
+    v
+Groq LLM (Llama 4 Scout)
+    |   system: RESPONSE_SYSTEM_PROMPT (strict citation rules)
+    |   user:   overlay data + clause text blocks
+    v
+Cited plain-English response
     |
     v
 Next.js renders results card
@@ -77,116 +53,68 @@ Next.js renders results card
 
 ---
 
-## Azure Services
-
-| Service | Tier | Role |
-|---|---|---|
-| Azure Static Web Apps | Free | Next.js frontend hosting |
-| Azure Functions (Python runtime) | Consumption | Agent backend — serverless, scales to zero |
-| Azure AI Foundry | Standard | Agent loop + tool calling |
-| Azure AI Search | Basic | Foundry IQ KB — vector + keyword hybrid search |
-| Azure OpenAI (gpt-4o-mini) | Pay-per-use | Language model |
-| Azure Blob Storage | LRS | KB source document store (PDFs, XML) |
-
----
-
 ## Repo Structure
 
 ```
-src/
-  agent/agent.py        # Pure agent logic — no UI deps
-  tools/geocoder.py     # Nominatim wrapper
-  tools/thelist.py      # theLIST ArcGIS REST wrapper (pyproj for coords)
-  app/                  # Next.js frontend (to be created)
-infra/
-  main.bicep            # Azure IaC deployment (scaffolded)
-data/
-  sample/               # Mock API responses for offline dev
-docs/
-  ARCHITECTURE.md       # This file
+tas-property-intelligence-agent/
+├── frontend/               # Next.js 16 UI
+│   └── src/app/page.tsx    # Address + mode + intent picker, results card
+├── src/
+│   ├── api.py              # FastAPI /check + /health
+│   ├── agent/agent.py      # LLM tool-loop agent
+│   └── tools/
+│       ├── geocoder.py     # Nominatim wrapper + TAS bbox guard
+│       ├── thelist.py      # theLIST ArcGIS REST (layers 8,13,14,15)
+│       ├── retriever.py    # MongoDB keyword + vector search
+│       ├── indexer.py      # Voyage AI embeddings → MongoDB
+│       ├── chunker.py      # PDF → clause-level chunks
+│       └── schemas.py      # OpenAI tool schemas
+├── data/
+│   ├── sample/             # Mock API responses (USE_MOCK_DATA=true)
+│   ├── raw/                # Source PDFs (gitignored)
+│   └── chunks/             # Chunked JSON (gitignored)
+└── docs/                   # PRD, research, architecture
 ```
 
 ---
 
-## KB Chunking Strategy
+## KB Strategy
 
-**Source documents:** TPS SPP PDFs (RAG only), Hobart LPS PDF, NCC 2022 XML (CC BY 4.0).
-Stored in Azure Blob Storage; indexed into Azure AI Search via Foundry IQ.
+**Source documents indexed:**
+- Hobart LPS 2025 (PDF, 545 pages) — 498 LPS chunks
+- TPS State Planning Provisions 2024 (PDF) — 90 SPP chunks
+- Total: 588 chunks in MongoDB Atlas `sitecheck.chunks`
 
-**Chunk unit:** One planning clause per chunk (e.g. C6.2.1.1, C6.2.1.2).
+**Chunk unit:** One planning clause per chunk (e.g. `C6.2.1`, `HOB-S7.0`).
 
-**Metadata per chunk:**
+**Retrieval:** `lps_ref` from theLIST live API → `retrieve_by_ref()` strips council prefix (`HOB-C6.2.1` → try `C6.2.1`, `C6.2`, `C6`). Falls back to keyword regex if vector search unavailable.
 
-| Field | Description |
-|---|---|
-| `lps_ref` | Primary lookup key — matches LPS_REF from theLIST live API |
-| `overlay_code` | Overlay code (e.g. `SLZ`) |
-| `clause_type` | `objectives` / `standards` / `acceptable_solutions` |
-| `lps_name` | Human-readable LPS name |
-| `council` | Council name (e.g. `Hobart`) |
-
-**Retrieval method:** LPS_REF from live spatial API -> direct lookup in KB. Targeted, not fuzzy. Agent does not need semantic search for clause retrieval; vector search used as fallback for ambiguous refs.
-
-**Chunk size rules:**
-- Oversized clauses: split by sub-clause boundary.
-- Micro-clauses (too short to be meaningful): merge with sibling clauses under same parent.
+**To enable semantic search:** Create Atlas Vector Search index `vector_index` on `sitecheck.chunks`:
+```json
+{"fields": [
+  {"type": "vector", "path": "embedding", "numDimensions": 1024, "similarity": "cosine"},
+  {"type": "filter", "path": "council"},
+  {"type": "filter", "path": "overlay_code"}
+]}
+```
 
 ---
 
 ## Coordinate Handling
 
-Nominatim returns WGS84 (EPSG:4326) lat/lng.
-
-theLIST ArcGIS REST queries use `inSR=4326` to pass coords directly — no reprojection needed in the common path.
-
-`pyproj` included in `tools/thelist.py` as fallback: if a layer rejects `inSR=4326` or returns no results, pyproj reprojects WGS84 -> GDA2020 / MGA Zone 55 (EPSG:7855) before retry.
-
----
-
-## Not in Scope
-
-| Feature | Reason excluded |
-|---|---|
-| Authentication | Anonymous use; hackathon scope |
-| Response caching | Low traffic; adds infra complexity |
-| Streaming responses | Simplifies Functions → Next.js boundary |
-| Database | No persistent state required |
-| Rate limiting | Deferred; Functions consumption plan throttles naturally |
+Nominatim → WGS84 (EPSG:4326). theLIST queries use `inSR=4326` directly.
+pyproj fallback: WGS84 → GDA2020/MGA Zone 55 (EPSG:7855) if layer rejects `inSR=4326`.
 
 ---
 
 ## Local Development
 
-**Prerequisites:**
-- Azure Functions Core Tools v4
-- Python 3.11+
-- Node.js 20+ (for Next.js)
-- `.env` file at repo root (see `.env.example`)
-
-**Key env vars:**
-
-```
-AZURE_OPENAI_ENDPOINT=
-AZURE_OPENAI_API_KEY=
-AZURE_AI_SEARCH_ENDPOINT=
-AZURE_AI_SEARCH_KEY=
-AZURE_AI_SEARCH_INDEX=
-```
-
-**Offline dev:** Mock API responses in `data/sample/` stand in for Nominatim and theLIST responses. Set `USE_MOCK_DATA=true` in `.env` to activate.
-
-**Run backend locally:**
-
 ```bash
-cd src
-func start
+# Backend
+.venv/bin/python3 -m uvicorn src.api:app --port 8000
+
+# Frontend
+cd frontend && npm run dev
 ```
 
-**Run frontend locally:**
-
-```bash
-cd src/app
-npm run dev
-```
-
-Frontend proxies `/api/*` to `http://localhost:7071` via `next.config.js` rewrites.
+See README for full setup. Env vars in `.env.example`.
