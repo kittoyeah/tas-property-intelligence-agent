@@ -1,33 +1,29 @@
 """
-indexer.py — chunks JSON → Voyage AI embeddings → Supabase pgvector
+indexer.py — chunks JSON → Voyage AI embeddings → MongoDB Atlas Vector Search
 
 Run once per council to populate the KB.
-Requires: VOYAGE_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY in .env
+Requires: VOYAGE_API_KEY, MONGODB_URI in .env
 
-Supabase SQL to run once before indexing:
-    create extension if not exists vector;
-
-    create table if not exists chunks (
-        id              bigserial primary key,
-        doc             text,
-        council         text,
-        clause_ref      text,
-        parent_clause   text,
-        code_ref        text,
-        overlay_code    text,
-        clause_type     text,
-        heading         text,
-        text            text,
-        source          text,
-        embedding       vector(1024)
-    );
-
-    create index if not exists chunks_embedding_idx
-        on chunks using ivfflat (embedding vector_cosine_ops)
-        with (lists = 100);
-
-    create index if not exists chunks_council_idx on chunks (council);
-    create index if not exists chunks_overlay_idx on chunks (overlay_code);
+MongoDB Atlas setup (one-time, in Atlas UI):
+1. Create free M0 cluster
+2. Get connection string → MONGODB_URI in .env
+3. After first index run, create Atlas Search index:
+   Database: sitecheck  Collection: chunks
+   Index name: vector_index
+   JSON config:
+   {
+     "fields": [
+       {
+         "type": "vector",
+         "path": "embedding",
+         "numDimensions": 1024,
+         "similarity": "cosine"
+       },
+       { "type": "filter", "path": "council" },
+       { "type": "filter", "path": "overlay_code" },
+       { "type": "filter", "path": "clause_ref" }
+     ]
+   }
 """
 
 import os
@@ -35,13 +31,15 @@ import json
 import time
 import argparse
 import voyageai
-from supabase import create_client
+from pymongo import MongoClient
 from dotenv import load_dotenv
 
 load_dotenv()
 
-BATCH_SIZE = 64  # Voyage AI max batch size
-EMBED_MODEL = "voyage-law-2"  # Legal/regulatory domain model
+BATCH_SIZE = 64
+EMBED_MODEL = "voyage-law-2"
+DB_NAME = "sitecheck"
+COLLECTION_NAME = "chunks"
 
 
 def embed_batch(vc: voyageai.Client, texts: list[str]) -> list[list[float]]:
@@ -51,11 +49,11 @@ def embed_batch(vc: voyageai.Client, texts: list[str]) -> list[list[float]]:
 
 def index_chunks(chunks_path: str, council_filter: str | None = None, dry_run: bool = False):
     voyage_key = os.environ["VOYAGE_API_KEY"]
-    supabase_url = os.environ["SUPABASE_URL"]
-    supabase_key = os.environ["SUPABASE_SERVICE_KEY"]
+    mongo_uri = os.environ["MONGODB_URI"]
 
     vc = voyageai.Client(api_key=voyage_key)
-    sb = create_client(supabase_url, supabase_key)
+    client = MongoClient(mongo_uri)
+    collection = client[DB_NAME][COLLECTION_NAME]
 
     with open(chunks_path) as f:
         chunks = json.load(f)
@@ -70,8 +68,9 @@ def index_chunks(chunks_path: str, council_filter: str | None = None, dry_run: b
         print("Dry run — no writes.")
         return
 
-    # Process in batches
     total = len(chunks)
+    inserted = 0
+
     for i in range(0, total, BATCH_SIZE):
         batch = chunks[i : i + BATCH_SIZE]
         texts = [c["text"] for c in batch]
@@ -79,9 +78,9 @@ def index_chunks(chunks_path: str, council_filter: str | None = None, dry_run: b
         print(f"Embedding batch {i//BATCH_SIZE + 1}/{(total + BATCH_SIZE - 1)//BATCH_SIZE} ({len(batch)} chunks)...")
         embeddings = embed_batch(vc, texts)
 
-        rows = []
+        docs = []
         for chunk, embedding in zip(batch, embeddings):
-            rows.append({
+            docs.append({
                 "doc":           chunk["doc"],
                 "council":       chunk["council"],
                 "clause_ref":    chunk["clause_ref"],
@@ -95,20 +94,21 @@ def index_chunks(chunks_path: str, council_filter: str | None = None, dry_run: b
                 "embedding":     embedding,
             })
 
-        sb.table("chunks").insert(rows).execute()
-        print(f"  Inserted {len(rows)} rows.")
+        result = collection.insert_many(docs)
+        inserted += len(result.inserted_ids)
+        print(f"  Inserted {len(result.inserted_ids)} docs.")
 
-        # Respect Voyage AI rate limit
         if i + BATCH_SIZE < total:
             time.sleep(0.5)
 
-    print(f"Done. {total} chunks indexed.")
+    print(f"Done. {inserted}/{total} chunks indexed into {DB_NAME}.{COLLECTION_NAME}.")
+    print("Next: create Atlas Vector Search index in Atlas UI (see module docstring).")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--chunks",  default="data/chunks/hobart-chunks.json")
-    parser.add_argument("--council", default="Hobart", help="Filter to council (also includes statewide)")
+    parser.add_argument("--council", default="Hobart")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
