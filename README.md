@@ -1,69 +1,144 @@
-# Tasmania Property Intelligence Agent
+# SiteCheck — Tasmania Property Intelligence Agent
 
-> "Find out what you can build on your land — before you wait weeks to be told no."
+> "Know your planning overlays before you build or buy."
 
-An AI agent that tells Tasmanians what hazard overlays apply to their property in 30 seconds — using the Tasmanian Government's own open spatial data.
+Enter a Tasmanian address → get a plain-English summary of planning overlays, zone, and permit pathway — every claim cited to the source clause.
 
-Built for the **Microsoft AI Skills Fest 2026** hackathon — Reasoning Agents track (Azure AI Foundry + Foundry IQ).
+Built for **Microsoft AI Skills Fest 2026** — Reasoning Agents track.
 
 ---
 
-## The Problem
+## Local Setup (Teammates)
 
-Tasmanians wanting to build face a fragmented planning system. The first step — finding out what overlays apply — requires either navigating multiple government portals or calling the council and waiting weeks. Meanwhile, planning officers across Australia are in [national shortage (JSA 2025)](https://www.jobsandskills.gov.au/data/occupation-and-industry-profiles/occupations/2326-urban-and-regional-planners), and that time is scarce.
+### Prerequisites
 
-## What It Does (Slice 1 — Risk Screener)
+- Python 3.11+
+- Node.js 18+
+- [Homebrew](https://brew.sh) (macOS)
 
-Enter a Tasmanian address → get a plain English summary of:
-- Flood overlay (statutory + hydraulic)
-- Bushfire overlay
-- Heritage overlay
-- Landslip overlay
+### 1. Clone
 
-Every flag cites the source layer. No hallucination. Graceful fallback if the API is unavailable.
+```bash
+git clone https://github.com/kittoyeah/tas-property-intelligence-agent.git
+cd tas-property-intelligence-agent
+```
 
-## Azure Stack
+### 2. Python environment
 
-| Service | Role |
+```bash
+brew install proj          # required for pyproj (coordinate transforms)
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+### 3. Frontend
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+### 4. Environment variables
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in:
+
+| Variable | Where to get it |
 |---|---|
-| Azure AI Foundry | Agent loop + tool calling |
-| Foundry IQ (Azure AI Search) | Grounded, cited knowledge retrieval |
-| Azure OpenAI gpt-4o-mini | Language model |
-| Azure Blob Storage | Knowledge source |
+| `LLM_API_KEY` | [console.groq.com](https://console.groq.com) → API Keys (free) |
+| `VOYAGE_API_KEY` | Ask team lead (shared free tier) |
+| `MONGODB_URI` | Ask team lead (shared Atlas cluster, KB already indexed) |
+
+Leave `LLM_BASE_URL` and `LLM_MODEL` as-is from `.env.example`.
+
+### 5. Run
+
+**Terminal 1 — API:**
+```bash
+.venv/bin/python3 -m uvicorn src.api:app --host 0.0.0.0 --port 8000
+```
+
+**Terminal 2 — Frontend:**
+```bash
+cd frontend
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+npm run dev
+```
+
+Open **http://localhost:3001** (or 3000 if not taken).
+
+### Test addresses
+
+| Address | What to expect |
+|---|---|
+| `8 Nelson Road Sandy Bay TAS 7005` | Clean — no overlays, General Residential zone |
+| `1 Napoleon Street Battery Point TAS 7004` | Heritage precinct + Battery Point SAP |
+| `45 Elizabeth Street Hobart TAS 7000` | Archaeological + heritage overlays |
+| `12 Main Road Glenorchy TAS 7010` | Glenorchy council, Utilities zone |
+
+---
+
+## Stack
+
+| Component | Dev (free) | Submission (Azure) |
+|---|---|---|
+| Frontend | Vercel | Azure Static Web Apps |
+| Backend | Railway (FastAPI) | Azure Functions |
+| LLM | Groq (Llama 4 Scout) | Azure OpenAI gpt-4o-mini |
+| Vector KB | MongoDB Atlas M0 | Azure AI Search |
+| Embeddings | Voyage AI voyage-law-2 | Azure AI Search built-in |
+
+Swap via env vars — `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`.
+
+## Architecture
+
+```
+Address + Mode + Intent
+        │
+        ▼
+  geocode_address()          ← Nominatim (OSM)
+        │
+        ▼
+  query_overlays()           ← theLIST ArcGIS REST (Layers 8, 13, 14, 15)
+        │
+        ▼
+  retrieve_by_ref()          ← MongoDB Atlas (keyword + vector search)
+        │ clause text
+        ▼
+  LLM (Llama 4 / gpt-4o-mini)
+        │ cited plain-English response
+        ▼
+     Frontend
+```
 
 ## Data Sources
 
-All open, CC-licensed, live REST APIs — no scraping, no PDFs for Slice 1.
-
-- **theLIST PlanningOnline ArcGIS REST** — CC BY 3.0 AU
-- **SES Flood Mapping ArcGIS REST** — theLIST terms
-- **OpenDataWFS** — CC BY 3.0 AU
-
-Full detail: [docs/PRD.md](docs/PRD.md) · [Data Sources.md](Data%20Sources.md)
+| Source | Licence | Used for |
+|---|---|---|
+| theLIST PlanningOnline ArcGIS REST | CC BY 3.0 AU | Zones, overlays, LGA |
+| Hobart LPS 2025 (PDF) | © HCC | KB clause text |
+| SPP 2024 (PDF) | CC BY 3.0 AU | KB clause text |
+| Nominatim / OpenStreetMap | ODbL | Geocoding |
 
 ## Repo Structure
 
 ```
 tas-property-intelligence-agent/
-├── docs/
-│   ├── PRD.md              # Problem, users, scope, success criteria
-│   └── ARCHITECTURE.md     # Azure services + data flow (coming)
+├── docs/               # PRD, architecture, research notes
 ├── src/
-│   ├── agent/              # Azure AI Foundry agent
-│   └── tools/              # theLIST API wrapper + geocoder
-├── infra/
-│   └── main.bicep          # Azure deployment
-├── notebooks/
-│   └── exploration.ipynb   # Foundry IQ cookbook (adapted)
+│   ├── agent/          # LLM tool-loop agent
+│   ├── tools/          # geocoder, theLIST wrapper, retriever, indexer
+│   └── api.py          # FastAPI endpoints
+├── frontend/           # Next.js 16 UI
 ├── data/
-│   └── sample/             # Sample API responses for testing
-└── Data Sources.md         # Full data source reference
+│   └── sample/         # Mock API responses for USE_MOCK_DATA=true
+└── .env.example        # Required env vars
 ```
-
-## Getting Started
-
-_Setup instructions coming once Azure resources are provisioned._
 
 ## Licence
 
-Code: MIT. Data: sourced from theLIST (CC BY 3.0 AU) and data.gov.au (CC BY 4.0). See [Data Sources.md](Data%20Sources.md) for per-source licence details.
+Code: MIT. Data: theLIST (CC BY 3.0 AU), Nominatim (ODbL). Hobart LPS © Hobart City Council — used for non-commercial research.
