@@ -23,24 +23,28 @@ from src.tools.schemas import ALL_TOOLS
 
 load_dotenv()
 
-SYSTEM_PROMPT = """You are SiteCheck, a Tasmanian property planning assistant.
+TOOL_SYSTEM_PROMPT = """You are SiteCheck, a Tasmanian property planning assistant.
+Use the provided tools to look up planning data for the given address. Call geocode_address first, then query_overlays."""
 
-Your job: given a property address, its planning overlays, zone, and relevant planning clauses, produce a plain-English summary tailored to the user's mode and intent.
+RESPONSE_SYSTEM_PROMPT = """You are SiteCheck, a Tasmanian property planning assistant.
 
-STRICT RULES:
-- Every claim must be supported by a cited clause reference (e.g. "Hobart LPS C12.0") or statute (e.g. "LUPAA s.57").
-- Never estimate costs, fees, or timelines unless directly stated in a cited clause.
-- Never predict council decisions ("likely approved/refused").
-- If information is not available in the provided clauses, say so explicitly and direct the user to their council.
-- For cost or fee questions, cite the fee schedule source and year, or redirect: "Contact your council for current fees."
-- Never provide legal or engineering advice.
+Given planning overlay data and relevant clause text, write a plain-English summary for the user.
 
-OUTPUT FORMAT:
-- Lead with overlay flags found (or "No overlays found — clean site.")
-- For each overlay: plain-English explanation + cited clause reference
-- Zone: what zone, what it means for the intent
-- Permit pathway: permitted or discretionary, statutory timeframe if applicable
-- End with: "For professional advice, contact a building designer or your council."
+CITATION RULES (strictly enforced):
+- Every factual claim MUST end with a citation in this exact format: [clause_ref — Source]
+  Examples: [C6.2.1 — SPP 2024]  [HOB-S7.0 — Hobart LPS 2025]
+- Only cite clause references that appear in the CLAUSE blocks provided below.
+- DO NOT invent clause references or URLs.
+- If no clause supports a claim, omit the claim or say "Confirm with your council."
+- Never estimate costs, fees, or timelines unless the exact figure is in a provided clause.
+- Never predict council decisions. Never give legal or engineering advice.
+
+OUTPUT STRUCTURE:
+Overlays: list each with plain-English meaning + citation, or "No overlays — clean site."
+Zone: zone name, what it means for the stated intent + citation.
+Permit Pathway: Permitted / Discretionary / Exempt — cite the determining clause.
+What This Means for You: 2-3 sentences tailored to mode and intent.
+End with: "For professional advice, contact a building designer or your council."
 """
 
 TOOL_FUNCTIONS = {
@@ -85,7 +89,12 @@ def _enrich_with_kb(overlay_result: dict) -> str:
                         top_k=3,
                     )
                 for c in clauses[:2]:
-                    kb_context.append(f"[{c['clause_ref']}] {c['heading']}\n{c['text'][:500]}\nSource: {c['source']}")
+                    kb_context.append(
+                        f"CLAUSE REF: {c['clause_ref']}\n"
+                        f"SOURCE: {c['source']}\n"
+                        f"HEADING: {c['heading']}\n"
+                        f"TEXT: {c['text'][:600]}"
+                    )
 
         if zone and zone.get("lps_ref"):
             zone_clauses = retrieve(
@@ -94,7 +103,12 @@ def _enrich_with_kb(overlay_result: dict) -> str:
                 top_k=3,
             )
             for c in zone_clauses[:2]:
-                kb_context.append(f"[{c['clause_ref']}] {c['heading']}\n{c['text'][:500]}\nSource: {c['source']}")
+                kb_context.append(
+                    f"CLAUSE REF: {c['clause_ref']}\n"
+                    f"SOURCE: {c['source']}\n"
+                    f"HEADING: {c['heading']}\n"
+                    f"TEXT: {c['text'][:600]}"
+                )
 
     except Exception:
         return "KB unavailable — responding from overlay data only."
@@ -121,15 +135,10 @@ def run(address: str, mode: str, intent: str) -> dict:
     model = os.environ.get("LLM_MODEL", "deepseek/deepseek-r1")
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": TOOL_SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": (
-                f"Address: {address}\n"
-                f"Mode: {mode}\n"
-                f"Intent: {intent}\n\n"
-                "Step 1: geocode the address. Step 2: query overlays. Step 3: I will provide KB clauses. Step 4: generate your response."
-            ),
+            "content": f"Address: {address}\nMode: {mode}\nIntent: {intent}",
         },
     ]
 
@@ -167,14 +176,23 @@ def run(address: str, mode: str, intent: str) -> dict:
     # Enrich with KB clauses
     if overlay_result:
         kb_context = _enrich_with_kb(overlay_result)
-        messages.append({
-            "role": "user",
-            "content": f"Here are the relevant planning clauses from the knowledge base:\n\n{kb_context}\n\nNow generate your response for mode={mode}, intent={intent}. Cite every claim.",
-        })
 
         final = client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=[
+                {"role": "system", "content": RESPONSE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Address: {address}\nMode: {mode}\nIntent: {intent}\n\n"
+                        f"Council: {overlay_result.get('council', {}).get('name')}\n"
+                        f"Zone: {overlay_result.get('zone', {})}\n"
+                        f"Overlays: {overlay_result.get('overlays', [])}\n\n"
+                        f"PLANNING CLAUSES FROM KNOWLEDGE BASE:\n{kb_context}\n\n"
+                        "Write your cited plain-English summary now."
+                    ),
+                },
+            ],
         )
         response_text = final.choices[0].message.content
     else:
