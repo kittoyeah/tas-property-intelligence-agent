@@ -1,0 +1,20 @@
+[
+  {
+    "code": "Flood-prone Hazard Areas Code",
+    "ov_name": "Flood-prone areas",
+    "ov_cat": null,
+    "descript": null,
+    "lps": "Hobart Local Provisions Schedule",
+    "lps_ref": "C12.0",
+    "layer": 14
+  },
+  {
+    "code": "Local Historical Heritage Code",
+    "ov_name": "Local heritage precinct",
+    "ov_cat": null,
+    "descript": "Battery Point",
+    "lps": "Hobart Local Provisions Schedule",
+    "lps_ref": "HOB-C6.2.1",
+    "layer": 14
+  }
+]
