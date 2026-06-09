@@ -1,21 +1,3 @@
-GEOCODE_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "geocode_address",
-        "description": "Convert a Tasmanian property address to WGS84 lat/lng coordinates.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "address": {
-                    "type": "string",
-                    "description": "Full Tasmanian address including street number, suburb, and postcode. Example: '8 Nelson Road Sandy Bay 7005'",
-                }
-            },
-            "required": ["address"],
-        },
-    },
-}
-
 QUERY_OVERLAYS_SCHEMA = {
     "type": "function",
     "function": {
@@ -32,10 +14,14 @@ QUERY_OVERLAYS_SCHEMA = {
                     "type": "number",
                     "description": "Longitude in WGS84. Example: 147.3323815",
                 },
+                "pid": {
+                    "type": "integer",
+                    "description": "Optional Parcel ID from theLIST Address Geocodes — enables exact parcel lookup instead of point-in-polygon.",
+                },
             },
             "required": ["lat", "lng"],
         },
     },
 }
 
-ALL_TOOLS = [GEOCODE_SCHEMA, QUERY_OVERLAYS_SCHEMA]
+ALL_TOOLS = [QUERY_OVERLAYS_SCHEMA]

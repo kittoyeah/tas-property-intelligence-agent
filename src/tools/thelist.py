@@ -306,31 +306,45 @@ def query_heritage(lat: float, lng: float) -> dict:
         return dict(_HERITAGE_DEFAULT)
 
 
-def query_existing_coverage(lat: float, lng: float, lot_area_sqm: float | None = None) -> dict:
+def query_existing_coverage(
+    lat: float,
+    lng: float,
+    lot_area_sqm: float | None = None,
+    parcel_rings_mga55: list | None = None,
+) -> dict:
     """Existing building site coverage — sum of building footprints on the parcel.
 
-    Fetches the parcel polygon (MGA55), finds all Building Footprints intersecting
-    it, sums their areas, and expresses as a % of lot area. Lets the agent answer
-    "how much more can I build" against the zone site-coverage standard.
+    Finds all Building Footprints intersecting the parcel polygon, sums their areas,
+    and expresses as a % of lot area. Lets the agent answer "how much more can I build"
+    against the zone site-coverage standard.
+
+    Args:
+        lat, lng: WGS84 point (used to find parcel if rings not supplied)
+        lot_area_sqm: pre-computed lot area (skips COMP_AREA lookup if provided)
+        parcel_rings_mga55: pre-fetched parcel rings in MGA55 (from PID lookup) — skips
+                            the point-in-polygon parcel query when provided
     """
     try:
         # 1. Parcel geometry in MGA55 (metric) for area maths
-        x, y = _wgs84_to_mga55.transform(lng, lat)
-        pr = requests.get(
-            f"{BASE_URL}/{LAYER_PARCELS}/query",
-            params={
-                "geometry": f"{x},{y}", "geometryType": "esriGeometryPoint", "inSR": "7855",
-                "spatialRel": "esriSpatialRelIntersects", "outFields": "COMP_AREA",
-                "returnGeometry": "true", "outSR": "7855", "f": "json",
-            }, timeout=15,
-        )
-        pdata = pr.json()
-        if not pdata.get("features"):
-            return dict(_COVERAGE_DEFAULT)
-        parcel = pdata["features"][0]
-        rings = parcel["geometry"]["rings"]
-        if lot_area_sqm is None:
-            lot_area_sqm = parcel["attributes"].get("COMP_AREA")
+        if parcel_rings_mga55 is not None:
+            rings = parcel_rings_mga55
+        else:
+            x, y = _wgs84_to_mga55.transform(lng, lat)
+            pr = requests.get(
+                f"{BASE_URL}/{LAYER_PARCELS}/query",
+                params={
+                    "geometry": f"{x},{y}", "geometryType": "esriGeometryPoint", "inSR": "7855",
+                    "spatialRel": "esriSpatialRelIntersects", "outFields": "COMP_AREA",
+                    "returnGeometry": "true", "outSR": "7855", "f": "json",
+                }, timeout=15,
+            )
+            pdata = pr.json()
+            if not pdata.get("features"):
+                return dict(_COVERAGE_DEFAULT)
+            parcel = pdata["features"][0]
+            rings = parcel["geometry"]["rings"]
+            if lot_area_sqm is None:
+                lot_area_sqm = parcel["attributes"].get("COMP_AREA")
 
         # 2. Building footprints intersecting the parcel
         fr = requests.get(
@@ -406,8 +420,49 @@ def query_epa_sites(lat: float, lng: float, radius_m: int = EPA_SEARCH_RADIUS_M)
         return dict(_EPA_DEFAULT)
 
 
-def query_overlays(lat: float, lng: float) -> dict:
-    """Query theLIST planning overlays, zone, and council for a WGS84 point."""
+def _query_parcel_by_pid(pid: int) -> dict | None:
+    """
+    Fetch a parcel record from layer 2 by exact PID.
+
+    Returns the first matching feature's attributes + geometry, or None.
+    """
+    try:
+        url = f"{BASE_URL}/{LAYER_PARCELS}/query"
+        resp = requests.get(
+            url,
+            params={
+                "where": f"PID={int(pid)}",
+                "outFields": "COMP_AREA,MEAS_AREA,PID,CID",
+                "returnGeometry": "true",
+                "outSR": "7855",
+                "f": "json",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if "error" in data:
+            return None
+        features = data.get("features", [])
+        if not features:
+            return None
+        return features[0]
+    except Exception:
+        return None
+
+
+def query_overlays(lat: float, lng: float, pid: int | None = None) -> dict:
+    """
+    Query theLIST planning overlays, zone, and council for a WGS84 point.
+
+    Args:
+        lat: WGS84 latitude
+        lng: WGS84 longitude
+        pid: optional Parcel ID from theLIST Address Geocodes — when provided,
+             fetches the exact parcel by PID (layer 2 query) for precise lot
+             area + geometry instead of point-in-polygon. All spatial overlay
+             queries still use lat/lng.
+    """
     if os.getenv("USE_MOCK_DATA") == "true":
         return _load_mock()
 
@@ -461,12 +516,28 @@ def query_overlays(lat: float, lng: float) -> dict:
             "layer": LAYER_GENERAL_OVERLAYS,
         })
 
-    parcel_features = _query_with_fallback(LAYER_PARCELS, lng, lat, "COMP_AREA,MEAS_AREA,PID,CID")
+    # Parcel lookup — prefer PID exact fetch; fallback to point-in-polygon
     lot_area_sqm = None
-    if parcel_features:
-        raw = parcel_features[0].get("COMP_AREA") or parcel_features[0].get("MEAS_AREA")
-        if raw:
-            lot_area_sqm = round(float(raw))
+    parcel_geometry_mga55 = None  # rings in MGA55 for coverage calc
+
+    if pid is not None:
+        pid_feature = _query_parcel_by_pid(pid)
+        if pid_feature:
+            attrs = pid_feature.get("attributes", {})
+            raw = attrs.get("COMP_AREA") or attrs.get("MEAS_AREA")
+            if raw:
+                lot_area_sqm = round(float(raw))
+            geom = pid_feature.get("geometry")
+            if geom and geom.get("rings"):
+                parcel_geometry_mga55 = geom["rings"]
+
+    if lot_area_sqm is None:
+        # Fallback: point-in-polygon
+        parcel_features = _query_with_fallback(LAYER_PARCELS, lng, lat, "COMP_AREA,MEAS_AREA,PID,CID")
+        if parcel_features:
+            raw = parcel_features[0].get("COMP_AREA") or parcel_features[0].get("MEAS_AREA")
+            if raw:
+                lot_area_sqm = round(float(raw))
 
     zone_features = _query_with_retry(LAYER_ZONES, lng, lat, "ZONE,ZONE_ABB,LPS,LPS_NO")
     zone = None
@@ -487,7 +558,10 @@ def query_overlays(lat: float, lng: float) -> dict:
     taswater = query_taswater(lat, lng)
     landslip = query_landslip(lat, lng)
     heritage = query_heritage(lat, lng)
-    coverage = query_existing_coverage(lat, lng, lot_area_sqm)
+    coverage = query_existing_coverage(
+        lat, lng, lot_area_sqm,
+        parcel_rings_mga55=parcel_geometry_mga55,
+    )
     epa = query_epa_sites(lat, lng)
 
     return {

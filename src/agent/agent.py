@@ -5,8 +5,9 @@ Uses OpenAI-compatible SDK (OpenRouter + DeepSeek R1 for dev,
 swap to Azure OpenAI for submission via env vars).
 
 Flow:
-  1. geocode_address(address) → lat/lng
-  2. query_overlays(lat, lng) → overlays + zone + council
+  1. lat/lng/pid arrive pre-resolved from FE autocomplete (no geocoding at check-time)
+     Fallback: if lat/lng missing, call geocode_address(address) -> theLIST layer 7
+  2. query_overlays(lat, lng, pid) → overlays + zone + council (deterministic, no LLM tool loop)
   3. retrieve KB clauses per overlay lps_ref
   4. Generate mode + intent specific plain-English response (all claims cited)
 """
@@ -23,12 +24,14 @@ from src.tools.thelist import (
     _HERITAGE_DEFAULT, _COVERAGE_DEFAULT, _EPA_DEFAULT,
 )
 from src.tools.retriever import retrieve, retrieve_by_ref
-from src.tools.schemas import ALL_TOOLS
+from src.tools.schemas import QUERY_OVERLAYS_SCHEMA
+
+ALL_TOOLS = [QUERY_OVERLAYS_SCHEMA]
 
 load_dotenv()
 
 TOOL_SYSTEM_PROMPT = """You are CanIBuild, a Tasmanian property planning assistant.
-Use the provided tools to look up planning data for the given address. Call geocode_address first, then query_overlays."""
+The address has already been geocoded. Use the provided tools to look up planning data."""
 
 RESPONSE_SYSTEM_PROMPT = """You are CanIBuild, a Tasmanian property planning assistant.
 
@@ -94,8 +97,7 @@ INTENT_QUERIES = {
 }
 
 TOOL_FUNCTIONS = {
-    "geocode_address": geocode_address,
-    "query_overlays": lambda lat, lng: query_overlays(lat, lng),
+    "query_overlays": lambda lat, lng, pid=None: query_overlays(lat, lng, pid=pid),
 }
 
 
@@ -192,14 +194,24 @@ def _enrich_with_kb(overlay_result: dict, intent: str = "just_checking") -> str:
     return "\n\n---\n\n".join(kb_context) if kb_context else "No matching KB clauses found."
 
 
-def run(address: str, mode: str, intent: str) -> dict:
+def run(
+    address: str,
+    mode: str,
+    intent: str,
+    lat: float | None = None,
+    lng: float | None = None,
+    pid: int | None = None,
+) -> dict:
     """
     Run CanIBuild agent.
 
     Args:
-        address: Tasmanian property address
+        address: Tasmanian property address (display only — already geocoded)
         mode:    "buyer" | "construction" | "da_owner"
         intent:  "just_checking" | "granny_flat" | "extension" | "additional_storey" | "new_dwelling" | "outbuilding"
+        lat:     WGS84 latitude (pre-resolved by FE autocomplete)
+        lng:     WGS84 longitude (pre-resolved by FE autocomplete)
+        pid:     Parcel ID from theLIST (pre-resolved by FE autocomplete, optional)
 
     Returns:
         dict with keys: address, overlays, zone, council, mode, intent, response, error
@@ -210,145 +222,130 @@ def run(address: str, mode: str, intent: str) -> dict:
     )
     model = os.environ.get("LLM_MODEL", "deepseek/deepseek-r1")
 
-    messages = [
-        {"role": "system", "content": TOOL_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": f"Address: {address}\nMode: {mode}\nIntent: {intent}",
-        },
-    ]
+    # Step 1: resolve coords — use pre-resolved point; fallback to theLIST geocode if missing
+    if lat is None or lng is None:
+        try:
+            geo = geocode_address(address)
+            lat = geo["lat"]
+            lng = geo["lng"]
+            if pid is None:
+                pid = geo.get("pid")
+        except (AddressNotFoundError, OutsideTasmaniaError) as e:
+            return {
+                "address": address, "mode": mode, "intent": intent,
+                "council": None, "zone": None, "overlays": [],
+                "lot_area_sqm": None, "kingborough_interim": False,
+                "flood": dict(_FLOOD_DEFAULT), "taswater": dict(_TASWATER_DEFAULT),
+                "landslip": dict(_LANDSLIP_DEFAULT),
+                "heritage_register": dict(_HERITAGE_DEFAULT),
+                "existing_coverage": dict(_COVERAGE_DEFAULT),
+                "epa_sites": dict(_EPA_DEFAULT),
+                "response": None, "error": str(e),
+            }
 
-    # Agent loop — tool calling
-    overlay_result = None
-    for _ in range(5):
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=ALL_TOOLS,
-            tool_choice="auto",
-        )
+    # Step 2: deterministic spatial queries — no LLM geocode tool loop
+    overlay_result = query_overlays(lat, lng, pid=pid)
 
-        msg = response.choices[0].message
+    # (No agent tool-calling loop needed — point already resolved)
 
-        if not msg.tool_calls:
-            break
+    # Step 3: Enrich with KB clauses
+    kb_context = _enrich_with_kb(overlay_result, intent=intent)
 
-        messages.append(msg)
+    flood = overlay_result.get("flood", {})
+    taswater = overlay_result.get("taswater", {})
+    landslip = overlay_result.get("landslip", {})
 
-        for tool_call in msg.tool_calls:
-            name = tool_call.function.name
-            args = json.loads(tool_call.function.arguments)
-            result = _call_tool(name, args)
+    flood_summary = (
+        f"IN FLOOD AREA — 1% AEP depth: {flood.get('depth_1pct_m')} m, "
+        f"hazard category: {flood.get('hazard_1pct')}, "
+        f"water level: {flood.get('water_level_1pct_ahd')} m AHD [theLIST SES Flood Mapping]"
+        if flood.get("in_flood_area")
+        else "Not in mapped 1% AEP flood area [theLIST SES Flood Mapping]"
+    )
+    taswater_summary = (
+        f"Sewer: {taswater.get('sewer_status') or 'Not serviced'} [TasWater Serviced Land]; "
+        f"Water: {taswater.get('water_status') or 'Not serviced'} [TasWater Serviced Land]"
+    )
+    landslip_summary = (
+        f"IN LANDSLIP HAZARD BAND — Band: {landslip.get('band')}, "
+        f"Exposure: {landslip.get('exposure')} [theLIST Landslide Planning Map]. "
+        "SPP C15 Landslip Code may apply."
+        if landslip.get("in_landslip_band")
+        else "Not in mapped landslip hazard band [theLIST Landslide Planning Map]"
+    )
 
-            if name == "query_overlays":
-                overlay_result = json.loads(result)
+    heritage = overlay_result.get("heritage_register", {})
+    coverage = overlay_result.get("existing_coverage", {})
+    epa = overlay_result.get("epa_sites", {})
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": result,
-            })
+    heritage_summary = (
+        f"STATE HERITAGE REGISTER — '{heritage.get('name')}' "
+        f"({heritage.get('status')}) [theLIST Tasmanian Heritage Register]. "
+        "Works require Heritage Tasmania approval."
+        if heritage.get("state_listed")
+        else "Not on the Tasmanian Heritage Register [theLIST Tasmanian Heritage Register]"
+    )
+    coverage_summary = (
+        f"Existing buildings cover ~{coverage.get('coverage_pct')}% of the lot "
+        f"({coverage.get('building_area_sqm')} m² across {coverage.get('building_count')} "
+        f"building(s), tallest ~{coverage.get('max_height_m')} m) [theLIST Building Footprints]"
+        if coverage.get("coverage_pct") is not None
+        else "Existing site coverage unavailable [theLIST Building Footprints]"
+    )
+    epa_summary = (
+        f"{epa.get('sites_nearby')} EPA-regulated site(s) within {epa.get('radius_m')} m: "
+        + "; ".join(f"{s.get('name')} ({s.get('category')})" for s in epa.get("sites", []))
+        + " [theLIST EPA Regulated Sites]"
+        if epa.get("sites_nearby")
+        else f"No EPA-regulated sites within {epa.get('radius_m', 300)} m [theLIST EPA Regulated Sites]"
+    )
 
-    # Enrich with KB clauses
-    if overlay_result:
-        kb_context = _enrich_with_kb(overlay_result, intent=intent)
-
-        flood = overlay_result.get("flood", {})
-        taswater = overlay_result.get("taswater", {})
-        landslip = overlay_result.get("landslip", {})
-
-        flood_summary = (
-            f"IN FLOOD AREA — 1% AEP depth: {flood.get('depth_1pct_m')} m, "
-            f"hazard category: {flood.get('hazard_1pct')}, "
-            f"water level: {flood.get('water_level_1pct_ahd')} m AHD [theLIST SES Flood Mapping]"
-            if flood.get("in_flood_area")
-            else "Not in mapped 1% AEP flood area [theLIST SES Flood Mapping]"
-        )
-        taswater_summary = (
-            f"Sewer: {taswater.get('sewer_status') or 'Not serviced'} [TasWater Serviced Land]; "
-            f"Water: {taswater.get('water_status') or 'Not serviced'} [TasWater Serviced Land]"
-        )
-        landslip_summary = (
-            f"IN LANDSLIP HAZARD BAND — Band: {landslip.get('band')}, "
-            f"Exposure: {landslip.get('exposure')} [theLIST Landslide Planning Map]. "
-            "SPP C15 Landslip Code may apply."
-            if landslip.get("in_landslip_band")
-            else "Not in mapped landslip hazard band [theLIST Landslide Planning Map]"
-        )
-
-        heritage = overlay_result.get("heritage_register", {})
-        coverage = overlay_result.get("existing_coverage", {})
-        epa = overlay_result.get("epa_sites", {})
-
-        heritage_summary = (
-            f"STATE HERITAGE REGISTER — '{heritage.get('name')}' "
-            f"({heritage.get('status')}) [theLIST Tasmanian Heritage Register]. "
-            "Works require Heritage Tasmania approval."
-            if heritage.get("state_listed")
-            else "Not on the Tasmanian Heritage Register [theLIST Tasmanian Heritage Register]"
-        )
-        coverage_summary = (
-            f"Existing buildings cover ~{coverage.get('coverage_pct')}% of the lot "
-            f"({coverage.get('building_area_sqm')} m² across {coverage.get('building_count')} "
-            f"building(s), tallest ~{coverage.get('max_height_m')} m) [theLIST Building Footprints]"
-            if coverage.get("coverage_pct") is not None
-            else "Existing site coverage unavailable [theLIST Building Footprints]"
-        )
-        epa_summary = (
-            f"{epa.get('sites_nearby')} EPA-regulated site(s) within {epa.get('radius_m')} m: "
-            + "; ".join(f"{s.get('name')} ({s.get('category')})" for s in epa.get("sites", []))
-            + " [theLIST EPA Regulated Sites]"
-            if epa.get("sites_nearby")
-            else f"No EPA-regulated sites within {epa.get('radius_m', 300)} m [theLIST EPA Regulated Sites]"
-        )
-
-        final = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": RESPONSE_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        f"Address: {address}\n"
-                        f"User intent: {intent.replace('_', ' ').upper()}\n"
-                        f"Mode: {mode}\n\n"
-                        f"Council: {overlay_result.get('council', {}).get('name')}\n"
-                        f"Zone: {overlay_result.get('zone', {})}\n"
-                        f"Lot area: {overlay_result.get('lot_area_sqm')} m²\n"
-                        f"Overlays: {overlay_result.get('overlays', [])}\n\n"
-                        f"SITE HAZARDS:\n"
-                        f"Flood: {flood_summary}\n"
-                        f"TasWater: {taswater_summary}\n"
-                        f"Landslip: {landslip_summary}\n"
-                        f"Heritage: {heritage_summary}\n"
-                        f"Existing coverage: {coverage_summary}\n"
-                        f"Contamination: {epa_summary}\n\n"
-                        f"PLANNING CLAUSES FROM KNOWLEDGE BASE:\n{kb_context}\n\n"
-                        f"Answer specifically for intent '{intent.replace('_', ' ')}'. "
-                        "Cite every factual claim. Write your cited plain-English summary now."
-                    ),
-                },
-            ],
-        )
-        response_text = final.choices[0].message.content
-    else:
-        response_text = msg.content if msg else "Unable to process address."
+    # Step 4: LLM briefing generation (only LLM call remaining)
+    final = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": RESPONSE_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Address: {address}\n"
+                    f"User intent: {intent.replace('_', ' ').upper()}\n"
+                    f"Mode: {mode}\n\n"
+                    f"Council: {overlay_result.get('council', {}).get('name')}\n"
+                    f"Zone: {overlay_result.get('zone', {})}\n"
+                    f"Lot area: {overlay_result.get('lot_area_sqm')} m²\n"
+                    f"Overlays: {overlay_result.get('overlays', [])}\n\n"
+                    f"SITE HAZARDS:\n"
+                    f"Flood: {flood_summary}\n"
+                    f"TasWater: {taswater_summary}\n"
+                    f"Landslip: {landslip_summary}\n"
+                    f"Heritage: {heritage_summary}\n"
+                    f"Existing coverage: {coverage_summary}\n"
+                    f"Contamination: {epa_summary}\n\n"
+                    f"PLANNING CLAUSES FROM KNOWLEDGE BASE:\n{kb_context}\n\n"
+                    f"Answer specifically for intent '{intent.replace('_', ' ')}'. "
+                    "Cite every factual claim. Write your cited plain-English summary now."
+                ),
+            },
+        ],
+    )
+    response_text = final.choices[0].message.content
 
     return {
         "address": address,
         "mode": mode,
         "intent": intent,
-        "council": overlay_result.get("council") if overlay_result else None,
-        "zone": overlay_result.get("zone") if overlay_result else None,
-        "overlays": overlay_result.get("overlays", []) if overlay_result else [],
-        "lot_area_sqm": overlay_result.get("lot_area_sqm") if overlay_result else None,
-        "kingborough_interim": overlay_result.get("kingborough_interim", False) if overlay_result else False,
-        "flood": overlay_result.get("flood", dict(_FLOOD_DEFAULT)) if overlay_result else dict(_FLOOD_DEFAULT),
-        "taswater": overlay_result.get("taswater", dict(_TASWATER_DEFAULT)) if overlay_result else dict(_TASWATER_DEFAULT),
-        "landslip": overlay_result.get("landslip", dict(_LANDSLIP_DEFAULT)) if overlay_result else dict(_LANDSLIP_DEFAULT),
-        "heritage_register": overlay_result.get("heritage_register", dict(_HERITAGE_DEFAULT)) if overlay_result else dict(_HERITAGE_DEFAULT),
-        "existing_coverage": overlay_result.get("existing_coverage", dict(_COVERAGE_DEFAULT)) if overlay_result else dict(_COVERAGE_DEFAULT),
-        "epa_sites": overlay_result.get("epa_sites", dict(_EPA_DEFAULT)) if overlay_result else dict(_EPA_DEFAULT),
+        "council": overlay_result.get("council"),
+        "zone": overlay_result.get("zone"),
+        "overlays": overlay_result.get("overlays", []),
+        "lot_area_sqm": overlay_result.get("lot_area_sqm"),
+        "kingborough_interim": overlay_result.get("kingborough_interim", False),
+        "flood": overlay_result.get("flood", dict(_FLOOD_DEFAULT)),
+        "taswater": overlay_result.get("taswater", dict(_TASWATER_DEFAULT)),
+        "landslip": overlay_result.get("landslip", dict(_LANDSLIP_DEFAULT)),
+        "heritage_register": overlay_result.get("heritage_register", dict(_HERITAGE_DEFAULT)),
+        "existing_coverage": overlay_result.get("existing_coverage", dict(_COVERAGE_DEFAULT)),
+        "epa_sites": overlay_result.get("epa_sites", dict(_EPA_DEFAULT)),
         "response": response_text,
         "error": None,
     }

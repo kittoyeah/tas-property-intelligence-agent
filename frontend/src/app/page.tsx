@@ -170,8 +170,10 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   // Autocomplete suggestions states
-  const [suggestions, setSuggestions] = useState<any[]>([]);
+  interface Suggestion { address: string; pid: number | null; lat: number; lng: number; }
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedCandidate, setSelectedCandidate] = useState<Suggestion | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [loaderStep, setLoaderStep] = useState("");
   const [streamedResponse, setStreamedResponse] = useState("");
@@ -194,10 +196,11 @@ export default function Home() {
     };
   }, []);
 
-  // Handle autocomplete address typing
+  // Handle autocomplete address typing — debounced call to /suggest (theLIST layer 7)
   const handleAddressChange = (val: string) => {
     setAddress(val);
     setCoords(null);
+    setSelectedCandidate(null);
 
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
 
@@ -209,32 +212,34 @@ export default function Home() {
 
     debounceTimer.current = setTimeout(async () => {
       try {
-        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val)}&format=json&limit=5&countrycodes=au&viewbox=143.82,-39.57,148.35,-43.65&bounded=1`;
-        const res = await fetch(url, {
-          headers: { "User-Agent": "CanIBuild/1.0" }
-        });
+        const res = await fetch(
+          `${API_URL}/suggest?q=${encodeURIComponent(val)}`
+        );
         if (res.ok) {
-          const data = await res.json();
+          const data: Suggestion[] = await res.json();
           setSuggestions(data);
-          setShowSuggestions(true);
+          setShowSuggestions(data.length > 0);
         }
       } catch (err) {
         console.error("Autocomplete error:", err);
+        setSuggestions([]);
+        setShowSuggestions(false);
       }
-    }, 350);
+    }, 250);
   };
 
-  // Handle Autocomplete suggestion selection
-  const handleSelectSuggestion = (sug: any) => {
-    setAddress(sug.display_name);
-    setCoords({ lat: parseFloat(sug.lat), lng: parseFloat(sug.lon) });
+  // Handle Autocomplete suggestion selection — stores resolved pid + coords
+  const handleSelectSuggestion = (sug: Suggestion) => {
+    setAddress(sug.address);
+    setSelectedCandidate(sug);
+    setCoords({ lat: sug.lat, lng: sug.lng });
     setSuggestions([]);
     setShowSuggestions(false);
   };
 
   // Step-by-step progress logging trigger
   const startLoaderProgression = () => {
-    setLoaderStep("Geocoding address in Tasmania (OpenStreetMap)...");
+    setLoaderStep("Querying Tasmanian Government spatial data (theLIST)...");
     
     const step2 = setTimeout(() => {
       setLoaderStep("Querying Tasmanian Government spatial overlays (theLIST)...");
@@ -292,32 +297,26 @@ export default function Home() {
     setExpandedGuide(null);
     setActiveSources([]);
     setHighlightedSource(null);
+    setSuggestions([]);
+    setShowSuggestions(false);
 
     const progressLoader = startLoaderProgression();
 
     try {
-      let activeCoords = coords;
-      
-      if (!activeCoords) {
-        try {
-          const geoRes = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}, Tasmania, Australia&format=json&limit=1&countrycodes=au`,
-            { headers: { "User-Agent": "CanIBuild/1.0" } }
-          );
-          const geoData = await geoRes.json();
-          if (geoData && geoData.length > 0) {
-            activeCoords = { lat: parseFloat(geoData[0].lat), lng: parseFloat(geoData[0].lon) };
-            setCoords(activeCoords);
-          }
-        } catch (e) {
-          console.warn("Manual geocoding fallback failed:", e);
-        }
-      }
+      // Use the pre-resolved candidate from autocomplete selection
+      const candidate = selectedCandidate;
 
       const res = await fetch(`${API_URL}/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, mode, intent }),
+        body: JSON.stringify({
+          address: candidate?.address ?? address,
+          lat: candidate?.lat ?? null,
+          lng: candidate?.lng ?? null,
+          pid: candidate?.pid ?? null,
+          mode,
+          intent,
+        }),
       });
 
       if (!res.ok) {
@@ -637,24 +636,37 @@ export default function Home() {
                   required
                   value={address}
                   onChange={e => handleAddressChange(e.target.value)}
-                  placeholder="e.g. 1 Napoleon Street Battery Point TAS 7004"
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                  placeholder="e.g. 1 Napoleon Street Battery Point"
+                  aria-autocomplete="list"
+                  aria-haspopup="listbox"
+                  aria-expanded={showSuggestions}
                   className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:outline-none bg-white planbuild-input text-slate-800"
                 />
                 
-                {/* Autocomplete Dropdown List */}
-                {showSuggestions && suggestions.length > 0 && (
-                  <ul className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto z-50 text-left divide-y divide-slate-100 text-xs">
-                    {suggestions.map((sug, i) => (
-                      <li key={i}>
-                        <button
-                          type="button"
-                          onClick={() => handleSelectSuggestion(sug)}
-                          className="w-full px-4 py-2.5 hover:bg-slate-50 transition-colors text-left text-slate-700 truncate block cursor-pointer"
-                        >
-                          {sug.display_name}
-                        </button>
-                      </li>
-                    ))}
+                {/* Autocomplete Dropdown List — theLIST authoritative addresses */}
+                {showSuggestions && (
+                  <ul
+                    role="listbox"
+                    aria-label="Address suggestions"
+                    className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto z-50 text-left divide-y divide-slate-100 text-xs"
+                  >
+                    {suggestions.length > 0 ? (
+                      suggestions.map((sug, i) => (
+                        <li key={i} role="option" aria-selected={false}>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectSuggestion(sug)}
+                            className="w-full px-4 py-2.5 hover:bg-slate-50 transition-colors text-left text-slate-700 truncate block cursor-pointer"
+                          >
+                            {sug.address}
+                          </button>
+                        </li>
+                      ))
+                    ) : (
+                      <li className="px-4 py-2.5 text-slate-400 italic">No addresses found — try a different search</li>
+                    )}
                   </ul>
                 )}
               </div>
@@ -693,7 +705,8 @@ export default function Home() {
 
               <button
                 type="submit"
-                disabled={loading || !address.trim()}
+                disabled={loading || !selectedCandidate}
+                title={!selectedCandidate ? "Select an address from the dropdown first" : undefined}
                 className="w-full bg-brand-primary hover:bg-brand-hover active:bg-brand-primary disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold py-3 px-4 rounded-lg text-sm transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
                 {loading ? (
