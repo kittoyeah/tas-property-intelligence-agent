@@ -17,7 +17,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 from src.tools.geocoder import geocode_address, AddressNotFoundError, OutsideTasmaniaError
-from src.tools.thelist import query_overlays
+from src.tools.thelist import query_overlays, _FLOOD_DEFAULT, _TASWATER_DEFAULT, _LANDSLIP_DEFAULT
 from src.tools.retriever import retrieve, retrieve_by_ref
 from src.tools.schemas import ALL_TOOLS
 
@@ -34,9 +34,11 @@ CITATION RULES (strictly enforced):
 - Every factual claim MUST end with a citation: [clause_ref — Source]
   Examples: [C6.2.1 — SPP 2024]  [HOB-S7.0 — Hobart LPS 2025]  [Z8.4.1 — SPP 2024]
 - Only cite clause references from the CLAUSE blocks provided. DO NOT invent references.
+- Hazard data citations use: [theLIST SES Flood Mapping], [theLIST Landslide Planning Map], [TasWater Serviced Land]
 - If no clause supports a claim, omit it or say "Confirm with your council."
 - Never estimate costs, fees, or timelines unless an exact figure appears in a clause.
 - Never predict council decisions. Never give legal or engineering advice.
+- For hazard data: report only the values returned — do NOT invent BAL ratings or flood predictions.
 
 INTENT-SPECIFIC GUIDANCE:
 - granny_flat / ancillary dwelling: state whether it's permitted/discretionary, cite setback and site coverage standards if present.
@@ -51,6 +53,7 @@ OUTPUT STRUCTURE:
 **Overlays:** List each with plain-English meaning + citation, or "No overlays."
 **Permit Pathway:** Permitted / Discretionary / Exempt — cite the clause that determines this.
 **Key Standards:** Any setbacks, height limits, or site coverage thresholds from the clauses.
+**Site Hazards:** Report flood status, TasWater serviced status, and landslip band. Cite theLIST sources. If in flood area include depth and hazard category. If in landslip band state band and note SPP C15 may apply. If TasWater not serviced note this affects servicing options.
 **What This Means for You:** 2-3 sentences directly addressing the stated intent.
 End with: "For professional advice, contact a building designer or your council."
 """
@@ -245,6 +248,29 @@ def run(address: str, mode: str, intent: str) -> dict:
     if overlay_result:
         kb_context = _enrich_with_kb(overlay_result, intent=intent)
 
+        flood = overlay_result.get("flood", {})
+        taswater = overlay_result.get("taswater", {})
+        landslip = overlay_result.get("landslip", {})
+
+        flood_summary = (
+            f"IN FLOOD AREA — 1% AEP depth: {flood.get('depth_1pct_m')} m, "
+            f"hazard category: {flood.get('hazard_1pct')}, "
+            f"water level: {flood.get('water_level_1pct_ahd')} m AHD [theLIST SES Flood Mapping]"
+            if flood.get("in_flood_area")
+            else "Not in mapped 1% AEP flood area [theLIST SES Flood Mapping]"
+        )
+        taswater_summary = (
+            f"Sewer: {taswater.get('sewer_status') or 'Not serviced'} [TasWater Serviced Land]; "
+            f"Water: {taswater.get('water_status') or 'Not serviced'} [TasWater Serviced Land]"
+        )
+        landslip_summary = (
+            f"IN LANDSLIP HAZARD BAND — Band: {landslip.get('band')}, "
+            f"Exposure: {landslip.get('exposure')} [theLIST Landslide Planning Map]. "
+            "SPP C15 Landslip Code may apply."
+            if landslip.get("in_landslip_band")
+            else "Not in mapped landslip hazard band [theLIST Landslide Planning Map]"
+        )
+
         final = client.chat.completions.create(
             model=model,
             messages=[
@@ -259,6 +285,10 @@ def run(address: str, mode: str, intent: str) -> dict:
                         f"Zone: {overlay_result.get('zone', {})}\n"
                         f"Lot area: {overlay_result.get('lot_area_sqm')} m²\n"
                         f"Overlays: {overlay_result.get('overlays', [])}\n\n"
+                        f"SITE HAZARDS:\n"
+                        f"Flood: {flood_summary}\n"
+                        f"TasWater: {taswater_summary}\n"
+                        f"Landslip: {landslip_summary}\n\n"
                         f"PLANNING CLAUSES FROM KNOWLEDGE BASE:\n{kb_context}\n\n"
                         f"Answer specifically for intent '{intent.replace('_', ' ')}'. "
                         "Cite every factual claim. Write your cited plain-English summary now."
@@ -279,6 +309,9 @@ def run(address: str, mode: str, intent: str) -> dict:
         "overlays": overlay_result.get("overlays", []) if overlay_result else [],
         "lot_area_sqm": overlay_result.get("lot_area_sqm") if overlay_result else None,
         "kingborough_interim": overlay_result.get("kingborough_interim", False) if overlay_result else False,
+        "flood": overlay_result.get("flood", dict(_FLOOD_DEFAULT)) if overlay_result else dict(_FLOOD_DEFAULT),
+        "taswater": overlay_result.get("taswater", dict(_TASWATER_DEFAULT)) if overlay_result else dict(_TASWATER_DEFAULT),
+        "landslip": overlay_result.get("landslip", dict(_LANDSLIP_DEFAULT)) if overlay_result else dict(_LANDSLIP_DEFAULT),
         "response": response_text,
         "error": None,
     }
