@@ -9,8 +9,8 @@ const montserrat = Montserrat({
 });
 
 export const metadata: Metadata = {
-  title: "SiteCheck — Tasmania Property Intelligence",
-  description: "Know your land before you buy, build, or apply. Powered by theLIST spatial data.",
+  title: "CanIBuild — Tasmania Property Intelligence",
+  description: "Find out what you can build on your land before you buy, build, or apply. Powered by theLIST spatial data.",
 };
 
 export default function RootLayout({

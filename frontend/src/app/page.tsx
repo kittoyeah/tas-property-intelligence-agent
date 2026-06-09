@@ -211,7 +211,7 @@ export default function Home() {
       try {
         const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val)}&format=json&limit=5&countrycodes=au&viewbox=143.82,-39.57,148.35,-43.65&bounded=1`;
         const res = await fetch(url, {
-          headers: { "User-Agent": "SiteCheck/1.0" }
+          headers: { "User-Agent": "CanIBuild/1.0" }
         });
         if (res.ok) {
           const data = await res.json();
@@ -302,7 +302,7 @@ export default function Home() {
         try {
           const geoRes = await fetch(
             `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}, Tasmania, Australia&format=json&limit=1&countrycodes=au`,
-            { headers: { "User-Agent": "SiteCheck/1.0" } }
+            { headers: { "User-Agent": "CanIBuild/1.0" } }
           );
           const geoData = await geoRes.json();
           if (geoData && geoData.length > 0) {
@@ -587,7 +587,7 @@ export default function Home() {
                 SC
               </div>
               <div>
-                <h1 className="text-base font-bold text-slate-900 tracking-tight leading-none text-left">SiteCheck</h1>
+                <h1 className="text-base font-bold text-slate-900 tracking-tight leading-none text-left">CanIBuild</h1>
                 <p className="text-[10px] text-slate-500 font-medium">Tasmania Property Intelligence</p>
               </div>
             </div>
@@ -1018,7 +1018,7 @@ export default function Home() {
                 </div>
               )}
 
-              {/* SiteCheck Analysis Summary Card */}
+              {/* CanIBuild Analysis Summary Card */}
               <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4 animate-slide-up">
                 
                 {/* Unified Header */}
@@ -1028,7 +1028,7 @@ export default function Home() {
                       SC
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-slate-900 tracking-tight leading-none text-left">SiteCheck Analysis Summary</h3>
+                      <h3 className="text-sm font-bold text-slate-900 tracking-tight leading-none text-left">CanIBuild Analysis Summary</h3>
                       <p className="text-[10px] text-slate-500 font-medium mt-1">Generated property planning assessment & guidelines</p>
                     </div>
                   </div>
@@ -1126,7 +1126,7 @@ export default function Home() {
       <footer className="bg-brand-secondary text-white text-xs py-8 px-4 mt-12 border-t border-slate-900 shadow-inner">
         <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
           <div className="space-y-2 text-center sm:text-left">
-            <div className="font-semibold text-sm">SiteCheck Tasmania</div>
+            <div className="font-semibold text-sm">CanIBuild Tasmania</div>
             <p className="text-slate-400 leading-normal">
               An AI-assisted planning screener utilizing CC BY 3.0 AU spatial overlays from theLIST.
             </p>

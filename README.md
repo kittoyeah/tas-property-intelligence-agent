@@ -1,4 +1,4 @@
-# SiteCheck — Tasmania Property Intelligence Agent
+# CanIBuild — Tasmania Property Intelligence Agent
 
 > "Know your planning overlays before you build or buy."
 

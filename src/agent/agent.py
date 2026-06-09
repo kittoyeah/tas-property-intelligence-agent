@@ -1,5 +1,5 @@
 """
-agent.py — SiteCheck reasoning agent
+agent.py — CanIBuild reasoning agent
 
 Uses OpenAI-compatible SDK (OpenRouter + DeepSeek R1 for dev,
 swap to Azure OpenAI for submission via env vars).
@@ -23,10 +23,10 @@ from src.tools.schemas import ALL_TOOLS
 
 load_dotenv()
 
-TOOL_SYSTEM_PROMPT = """You are SiteCheck, a Tasmanian property planning assistant.
+TOOL_SYSTEM_PROMPT = """You are CanIBuild, a Tasmanian property planning assistant.
 Use the provided tools to look up planning data for the given address. Call geocode_address first, then query_overlays."""
 
-RESPONSE_SYSTEM_PROMPT = """You are SiteCheck, a Tasmanian property planning assistant.
+RESPONSE_SYSTEM_PROMPT = """You are CanIBuild, a Tasmanian property planning assistant.
 
 Given planning overlay data and relevant clause text, write a plain-English summary for the user.
 
@@ -118,7 +118,7 @@ def _enrich_with_kb(overlay_result: dict) -> str:
 
 def run(address: str, mode: str, intent: str) -> dict:
     """
-    Run SiteCheck agent.
+    Run CanIBuild agent.
 
     Args:
         address: Tasmanian property address

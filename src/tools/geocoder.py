@@ -3,7 +3,7 @@ import json
 import requests
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-USER_AGENT = "SiteCheck/1.0 (chris.kittichod@gmail.com)"
+USER_AGENT = "CanIBuild/1.0 (chris.kittichod@gmail.com)"
 
 TAS_BBOX = {
     "lat_min": -43.65,

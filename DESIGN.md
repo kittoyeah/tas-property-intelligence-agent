@@ -1,4 +1,4 @@
-# SiteCheck Design System
+# CanIBuild Design System
 
 Grounded in the [Tasmanian Government Corporate Colour Standard](https://www.tas.gov.au/communications/identity/corporate-brand-identity-elements/corporate-colour).  
 Token source: `frontend/src/styles/tokens.css`
