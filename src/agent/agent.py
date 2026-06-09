@@ -28,24 +28,62 @@ Use the provided tools to look up planning data for the given address. Call geoc
 
 RESPONSE_SYSTEM_PROMPT = """You are CanIBuild, a Tasmanian property planning assistant.
 
-Given planning overlay data and relevant clause text, write a plain-English summary for the user.
+Given planning data and clause text, write a plain-English summary focused on the user's INTENT.
 
 CITATION RULES (strictly enforced):
-- Every factual claim MUST end with a citation in this exact format: [clause_ref — Source]
-  Examples: [C6.2.1 — SPP 2024]  [HOB-S7.0 — Hobart LPS 2025]
-- Only cite clause references that appear in the CLAUSE blocks provided below.
-- DO NOT invent clause references or URLs.
-- If no clause supports a claim, omit the claim or say "Confirm with your council."
-- Never estimate costs, fees, or timelines unless the exact figure is in a provided clause.
+- Every factual claim MUST end with a citation: [clause_ref — Source]
+  Examples: [C6.2.1 — SPP 2024]  [HOB-S7.0 — Hobart LPS 2025]  [Z8.4.1 — SPP 2024]
+- Only cite clause references from the CLAUSE blocks provided. DO NOT invent references.
+- If no clause supports a claim, omit it or say "Confirm with your council."
+- Never estimate costs, fees, or timelines unless an exact figure appears in a clause.
 - Never predict council decisions. Never give legal or engineering advice.
 
+INTENT-SPECIFIC GUIDANCE:
+- granny_flat / ancillary dwelling: state whether it's permitted/discretionary, cite setback and site coverage standards if present.
+- extension / alterations: state whether exempt or requires permit, cite relevant threshold.
+- additional_storey: cite building height limit for the zone.
+- new_dwelling: state permitted/discretionary status, cite key standards (setback, height, coverage).
+- outbuilding: state whether exempt, cite size/height thresholds if present.
+- just_checking: summarise zone purpose and overlay constraints.
+
 OUTPUT STRUCTURE:
-Overlays: list each with plain-English meaning + citation, or "No overlays — clean site."
-Zone: zone name, what it means for the stated intent + citation.
-Permit Pathway: Permitted / Discretionary / Exempt — cite the determining clause.
-What This Means for You: 2-3 sentences tailored to mode and intent.
+**Zone:** Zone name + what it allows/restricts for this intent + citation.
+**Overlays:** List each with plain-English meaning + citation, or "No overlays."
+**Permit Pathway:** Permitted / Discretionary / Exempt — cite the clause that determines this.
+**Key Standards:** Any setbacks, height limits, or site coverage thresholds from the clauses.
+**What This Means for You:** 2-3 sentences directly addressing the stated intent.
 End with: "For professional advice, contact a building designer or your council."
 """
+
+# Maps theLIST zone names (ZONE field) to KB clause_ref prefixes (Z8, Z9, …)
+ZONE_CODE_MAP = {
+    "General Residential":       "Z8",
+    "Inner Residential":         "Z9",
+    "Low Density Residential":   "Z10",
+    "Rural Living":              "Z11",
+    "Village":                   "Z12",
+    "Urban Mixed Use":           "Z13",
+    "Local Business":            "Z14",
+    "General Business":          "Z15",
+    "Central Business":          "Z16",
+    "Commercial":                "Z17",
+    "Light Industrial":          "Z18",
+    "General Industrial":        "Z19",
+    "Rural":                     "Z20",
+    "Agriculture":               "Z21",
+    "Landscape Conservation":    "Z22",
+    "Environmental Management":  "Z23",
+    "Major Tourism":             "Z24",
+}
+
+INTENT_QUERIES = {
+    "granny_flat":       "ancillary dwelling secondary dwelling setback site coverage permit",
+    "extension":         "alterations additions extension dwelling setback building height permit",
+    "additional_storey": "building height additional storey storey setback",
+    "new_dwelling":      "single dwelling new dwelling permitted use setback site coverage",
+    "outbuilding":       "outbuilding garage shed carport exempt permitted development",
+    "just_checking":     "permitted use discretionary prohibited zone purpose",
+}
 
 TOOL_FUNCTIONS = {
     "geocode_address": geocode_address,
@@ -66,49 +104,57 @@ def _call_tool(name: str, args: dict) -> str:
         return json.dumps({"error": f"Tool error: {str(e)}"})
 
 
-def _enrich_with_kb(overlay_result: dict) -> str:
-    """Retrieve KB clauses for each overlay lps_ref and append to context."""
+def _enrich_with_kb(overlay_result: dict, intent: str = "just_checking") -> str:
+    """Retrieve KB clauses for each overlay and zone, intent-aware."""
     council = overlay_result.get("council", {}).get("name")
     overlays = overlay_result.get("overlays", [])
     zone = overlay_result.get("zone")
+    intent_terms = INTENT_QUERIES.get(intent, "permitted use development")
 
     kb_context = []
+    seen_refs: set[str] = set()
+
+    def _append(clauses: list[dict], limit: int = 3) -> None:
+        for c in clauses[:limit]:
+            ref = c.get("clause_ref", "")
+            if ref not in seen_refs:
+                seen_refs.add(ref)
+                kb_context.append(
+                    f"CLAUSE REF: {ref}\n"
+                    f"SOURCE: {c['source']}\n"
+                    f"HEADING: {c['heading']}\n"
+                    f"TEXT: {c['text'][:1000]}"
+                )
 
     try:
+        # 1. Overlay clauses — intent-aware fallback query
         for overlay in overlays:
             lps_ref = overlay.get("lps_ref")
             overlay_code = overlay.get("code")
+            overlay_name = overlay.get("ov_name") or overlay_code or ""
 
             if lps_ref:
                 clauses = retrieve_by_ref(lps_ref, council=council)
                 if not clauses:
                     clauses = retrieve(
-                        f"{overlay_code} {lps_ref}",
+                        f"{overlay_name} {intent_terms}",
                         council=council,
                         overlay_code=overlay_code,
-                        top_k=3,
+                        top_k=5,
                     )
-                for c in clauses[:2]:
-                    kb_context.append(
-                        f"CLAUSE REF: {c['clause_ref']}\n"
-                        f"SOURCE: {c['source']}\n"
-                        f"HEADING: {c['heading']}\n"
-                        f"TEXT: {c['text'][:600]}"
-                    )
+                _append(clauses, limit=3)
 
-        if zone and zone.get("lps_ref"):
-            zone_clauses = retrieve(
-                f"zone {zone.get('zone')} permitted discretionary use",
-                council=council,
-                top_k=3,
-            )
-            for c in zone_clauses[:2]:
-                kb_context.append(
-                    f"CLAUSE REF: {c['clause_ref']}\n"
-                    f"SOURCE: {c['source']}\n"
-                    f"HEADING: {c['heading']}\n"
-                    f"TEXT: {c['text'][:600]}"
-                )
+        # 2a. Zone use table — intent-aware
+        if zone:
+            zone_name = zone.get("zone", "")
+            zone_code = ZONE_CODE_MAP.get(zone_name)
+
+            q_uses = f"{zone_name} {intent_terms} permitted discretionary prohibited"
+            _append(retrieve(q_uses, council=council, zone_code=zone_code, top_k=5), limit=3)
+
+            # 2b. Zone development standards — setbacks, height, site coverage
+            q_dev = f"{zone_name} development standards setback building height site coverage floor area"
+            _append(retrieve(q_dev, council=council, zone_code=zone_code, top_k=5), limit=3)
 
     except Exception:
         return "KB unavailable — responding from overlay data only."
@@ -175,7 +221,7 @@ def run(address: str, mode: str, intent: str) -> dict:
 
     # Enrich with KB clauses
     if overlay_result:
-        kb_context = _enrich_with_kb(overlay_result)
+        kb_context = _enrich_with_kb(overlay_result, intent=intent)
 
         final = client.chat.completions.create(
             model=model,
@@ -184,12 +230,15 @@ def run(address: str, mode: str, intent: str) -> dict:
                 {
                     "role": "user",
                     "content": (
-                        f"Address: {address}\nMode: {mode}\nIntent: {intent}\n\n"
+                        f"Address: {address}\n"
+                        f"User intent: {intent.replace('_', ' ').upper()}\n"
+                        f"Mode: {mode}\n\n"
                         f"Council: {overlay_result.get('council', {}).get('name')}\n"
                         f"Zone: {overlay_result.get('zone', {})}\n"
                         f"Overlays: {overlay_result.get('overlays', [])}\n\n"
                         f"PLANNING CLAUSES FROM KNOWLEDGE BASE:\n{kb_context}\n\n"
-                        "Write your cited plain-English summary now."
+                        f"Answer specifically for intent '{intent.replace('_', ' ')}'. "
+                        "Cite every factual claim. Write your cited plain-English summary now."
                     ),
                 },
             ],

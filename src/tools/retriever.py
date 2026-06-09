@@ -66,6 +66,7 @@ def retrieve(
     query: str,
     council: str | None = None,
     overlay_code: str | None = None,
+    zone_code: str | None = None,
     top_k: int = DEFAULT_TOP_K,
 ) -> list[dict]:
     """
@@ -103,11 +104,17 @@ def retrieve(
 
         results = list(collection.aggregate(pipeline))
 
-        # Post-filter by council / overlay_code
+        # Post-filter by council / overlay_code / zone_code
         if council:
             results = [r for r in results if r.get("council") in (council, "statewide")]
         if overlay_code:
             results = [r for r in results if r.get("overlay_code") == overlay_code]
+        if zone_code:
+            results = [
+                r for r in results
+                if r.get("code_ref") == zone_code
+                or r.get("clause_ref", "").startswith(zone_code + ".")
+            ]
 
         results = results[:top_k]
         if results:
