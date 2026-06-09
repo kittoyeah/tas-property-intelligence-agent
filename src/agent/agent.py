@@ -126,14 +126,21 @@ def _enrich_with_kb(overlay_result: dict, intent: str = "just_checking") -> str:
                     f"TEXT: {c['text'][:1000]}"
                 )
 
+    def _top_code(lps_ref: str) -> str | None:
+        """Extract SPP top code from lps_ref. 'HOB-C6.2.1' → 'C6'."""
+        import re
+        m = re.search(r'(C\d+)', lps_ref or "")
+        return m.group(1) if m else None
+
     try:
-        # 1. Overlay clauses — intent-aware fallback query
+        # 1. Overlay clauses — application clause + dev standards
         for overlay in overlays:
             lps_ref = overlay.get("lps_ref")
             overlay_code = overlay.get("code")
             overlay_name = overlay.get("ov_name") or overlay_code or ""
 
             if lps_ref:
+                # 1a. Application clause (what area/precinct this covers)
                 clauses = retrieve_by_ref(lps_ref, council=council)
                 if not clauses:
                     clauses = retrieve(
@@ -142,19 +149,34 @@ def _enrich_with_kb(overlay_result: dict, intent: str = "just_checking") -> str:
                         overlay_code=overlay_code,
                         top_k=5,
                     )
-                _append(clauses, limit=3)
+                _append(clauses, limit=2)
 
-        # 2a. Zone use table — intent-aware
+                # 1b. Dev standards for this overlay code (C6.6, C12.6, C13.5 etc.)
+                top = _top_code(lps_ref)
+                if top:
+                    dev_clauses = retrieve(
+                        f"{overlay_name} development standards {intent_terms}",
+                        council=council,
+                        zone_code=top,
+                        top_k=5,
+                    )
+                    _append(dev_clauses, limit=3)
+
+        # 2a. Zone use table + statewide provisions — NO zone_code filter so SPP-4/6 docs included
         if zone:
             zone_name = zone.get("zone", "")
             zone_code = ZONE_CODE_MAP.get(zone_name)
 
             q_uses = f"{zone_name} {intent_terms} permitted discretionary prohibited"
-            _append(retrieve(q_uses, council=council, zone_code=zone_code, top_k=5), limit=3)
+            _append(retrieve(q_uses, council=council, top_k=5), limit=3)
 
-            # 2b. Zone development standards — setbacks, height, site coverage
+            # 2b. Zone-specific development standards — zone_code filter keeps results precise
             q_dev = f"{zone_name} development standards setback building height site coverage floor area"
             _append(retrieve(q_dev, council=council, zone_code=zone_code, top_k=5), limit=3)
+
+            # 2c. Statewide exempt provisions for this intent (SPP Section 4)
+            q_exempt = f"exempt {intent_terms} no permit required"
+            _append(retrieve(q_exempt, council=council, top_k=5), limit=2)
 
     except Exception:
         return "KB unavailable — responding from overlay data only."
@@ -235,6 +257,7 @@ def run(address: str, mode: str, intent: str) -> dict:
                         f"Mode: {mode}\n\n"
                         f"Council: {overlay_result.get('council', {}).get('name')}\n"
                         f"Zone: {overlay_result.get('zone', {})}\n"
+                        f"Lot area: {overlay_result.get('lot_area_sqm')} m²\n"
                         f"Overlays: {overlay_result.get('overlays', [])}\n\n"
                         f"PLANNING CLAUSES FROM KNOWLEDGE BASE:\n{kb_context}\n\n"
                         f"Answer specifically for intent '{intent.replace('_', ' ')}'. "
@@ -254,6 +277,7 @@ def run(address: str, mode: str, intent: str) -> dict:
         "council": overlay_result.get("council") if overlay_result else None,
         "zone": overlay_result.get("zone") if overlay_result else None,
         "overlays": overlay_result.get("overlays", []) if overlay_result else [],
+        "lot_area_sqm": overlay_result.get("lot_area_sqm") if overlay_result else None,
         "kingborough_interim": overlay_result.get("kingborough_interim", False) if overlay_result else False,
         "response": response_text,
         "error": None,

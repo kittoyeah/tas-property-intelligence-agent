@@ -11,6 +11,7 @@ LAYER_GENERAL_OVERLAYS = 15
 LAYER_ZONES = 13
 LAYER_LGA = 8
 LAYER_KINGBOROUGH_OVERLAY = 3
+LAYER_PARCELS = 2
 
 MOCK_DIR = os.path.join(os.path.dirname(__file__), "../../data/sample")
 
@@ -120,6 +121,13 @@ def query_overlays(lat: float, lng: float) -> dict:
             "layer": LAYER_GENERAL_OVERLAYS,
         })
 
+    parcel_features = _query_with_fallback(LAYER_PARCELS, lng, lat, "COMP_AREA,MEAS_AREA,PID,CID")
+    lot_area_sqm = None
+    if parcel_features:
+        raw = parcel_features[0].get("COMP_AREA") or parcel_features[0].get("MEAS_AREA")
+        if raw:
+            lot_area_sqm = round(float(raw))
+
     zone_features = _query_with_retry(LAYER_ZONES, lng, lat, "ZONE,ZONE_ABB,LPS,LPS_NO")
     zone = None
     if zone_features:
@@ -139,6 +147,7 @@ def query_overlays(lat: float, lng: float) -> dict:
         "council": council,
         "zone": zone,
         "overlays": overlays,
+        "lot_area_sqm": lot_area_sqm,
         "kingborough_interim": kingborough_warning,
     }
 
