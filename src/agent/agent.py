@@ -17,7 +17,11 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 from src.tools.geocoder import geocode_address, AddressNotFoundError, OutsideTasmaniaError
-from src.tools.thelist import query_overlays, _FLOOD_DEFAULT, _TASWATER_DEFAULT, _LANDSLIP_DEFAULT
+from src.tools.thelist import (
+    query_overlays,
+    _FLOOD_DEFAULT, _TASWATER_DEFAULT, _LANDSLIP_DEFAULT,
+    _HERITAGE_DEFAULT, _COVERAGE_DEFAULT, _EPA_DEFAULT,
+)
 from src.tools.retriever import retrieve, retrieve_by_ref
 from src.tools.schemas import ALL_TOOLS
 
@@ -34,7 +38,7 @@ CITATION RULES (strictly enforced):
 - Every factual claim MUST end with a citation: [clause_ref — Source]
   Examples: [C6.2.1 — SPP 2024]  [HOB-S7.0 — Hobart LPS 2025]  [Z8.4.1 — SPP 2024]
 - Only cite clause references from the CLAUSE blocks provided. DO NOT invent references.
-- Hazard data citations use: [theLIST SES Flood Mapping], [theLIST Landslide Planning Map], [TasWater Serviced Land]
+- Hazard data citations use: [theLIST SES Flood Mapping], [theLIST Landslide Planning Map], [TasWater Serviced Land], [theLIST Tasmanian Heritage Register], [theLIST Building Footprints], [theLIST EPA Regulated Sites]
 - If no clause supports a claim, omit it or say "Confirm with your council."
 - Never estimate costs, fees, or timelines unless an exact figure appears in a clause.
 - Never predict council decisions. Never give legal or engineering advice.
@@ -54,6 +58,7 @@ OUTPUT STRUCTURE:
 **Permit Pathway:** Permitted / Discretionary / Exempt — cite the clause that determines this.
 **Key Standards:** Any setbacks, height limits, or site coverage thresholds from the clauses.
 **Site Hazards:** Report flood status, TasWater serviced status, and landslip band. Cite theLIST sources. If in flood area include depth and hazard category. If in landslip band state band and note SPP C15 may apply. If TasWater not serviced note this affects servicing options.
+**Site Intelligence:** Report state Heritage Register status (if listed, note works need Heritage Tasmania approval), existing building site coverage % (compare to the zone's max site coverage standard if known — this shows remaining development headroom), and any nearby EPA-regulated/contaminated sites. Cite theLIST sources. Omit a line only if its data is unavailable.
 **What This Means for You:** 2-3 sentences directly addressing the stated intent.
 End with: "For professional advice, contact a building designer or your council."
 """
@@ -271,6 +276,32 @@ def run(address: str, mode: str, intent: str) -> dict:
             else "Not in mapped landslip hazard band [theLIST Landslide Planning Map]"
         )
 
+        heritage = overlay_result.get("heritage_register", {})
+        coverage = overlay_result.get("existing_coverage", {})
+        epa = overlay_result.get("epa_sites", {})
+
+        heritage_summary = (
+            f"STATE HERITAGE REGISTER — '{heritage.get('name')}' "
+            f"({heritage.get('status')}) [theLIST Tasmanian Heritage Register]. "
+            "Works require Heritage Tasmania approval."
+            if heritage.get("state_listed")
+            else "Not on the Tasmanian Heritage Register [theLIST Tasmanian Heritage Register]"
+        )
+        coverage_summary = (
+            f"Existing buildings cover ~{coverage.get('coverage_pct')}% of the lot "
+            f"({coverage.get('building_area_sqm')} m² across {coverage.get('building_count')} "
+            f"building(s), tallest ~{coverage.get('max_height_m')} m) [theLIST Building Footprints]"
+            if coverage.get("coverage_pct") is not None
+            else "Existing site coverage unavailable [theLIST Building Footprints]"
+        )
+        epa_summary = (
+            f"{epa.get('sites_nearby')} EPA-regulated site(s) within {epa.get('radius_m')} m: "
+            + "; ".join(f"{s.get('name')} ({s.get('category')})" for s in epa.get("sites", []))
+            + " [theLIST EPA Regulated Sites]"
+            if epa.get("sites_nearby")
+            else f"No EPA-regulated sites within {epa.get('radius_m', 300)} m [theLIST EPA Regulated Sites]"
+        )
+
         final = client.chat.completions.create(
             model=model,
             messages=[
@@ -288,7 +319,10 @@ def run(address: str, mode: str, intent: str) -> dict:
                         f"SITE HAZARDS:\n"
                         f"Flood: {flood_summary}\n"
                         f"TasWater: {taswater_summary}\n"
-                        f"Landslip: {landslip_summary}\n\n"
+                        f"Landslip: {landslip_summary}\n"
+                        f"Heritage: {heritage_summary}\n"
+                        f"Existing coverage: {coverage_summary}\n"
+                        f"Contamination: {epa_summary}\n\n"
                         f"PLANNING CLAUSES FROM KNOWLEDGE BASE:\n{kb_context}\n\n"
                         f"Answer specifically for intent '{intent.replace('_', ' ')}'. "
                         "Cite every factual claim. Write your cited plain-English summary now."
@@ -312,6 +346,9 @@ def run(address: str, mode: str, intent: str) -> dict:
         "flood": overlay_result.get("flood", dict(_FLOOD_DEFAULT)) if overlay_result else dict(_FLOOD_DEFAULT),
         "taswater": overlay_result.get("taswater", dict(_TASWATER_DEFAULT)) if overlay_result else dict(_TASWATER_DEFAULT),
         "landslip": overlay_result.get("landslip", dict(_LANDSLIP_DEFAULT)) if overlay_result else dict(_LANDSLIP_DEFAULT),
+        "heritage_register": overlay_result.get("heritage_register", dict(_HERITAGE_DEFAULT)) if overlay_result else dict(_HERITAGE_DEFAULT),
+        "existing_coverage": overlay_result.get("existing_coverage", dict(_COVERAGE_DEFAULT)) if overlay_result else dict(_COVERAGE_DEFAULT),
+        "epa_sites": overlay_result.get("epa_sites", dict(_EPA_DEFAULT)) if overlay_result else dict(_EPA_DEFAULT),
         "response": response_text,
         "error": None,
     }

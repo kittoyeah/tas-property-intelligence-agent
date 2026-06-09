@@ -8,6 +8,9 @@ BASE_URL = "https://services.thelist.tas.gov.au/arcgis/rest/services/Public/Plan
 FLOOD_BASE_URL = "https://services.thelist.tas.gov.au/arcgis/rest/services/Public/SES_FloodMapping/MapServer"
 INFRA_BASE_URL = "https://services.thelist.tas.gov.au/arcgis/rest/services/Public/Infrastructure/MapServer"
 GEO_BASE_URL = "https://services.thelist.tas.gov.au/arcgis/rest/services/Public/GeologicalAndSoils/MapServer"
+HERITAGE_BASE_URL = "https://services.thelist.tas.gov.au/arcgis/rest/services/HT/HT_Public/MapServer"
+TOPO_BASE_URL = "https://services.thelist.tas.gov.au/arcgis/rest/services/Public/TopographyAndRelief/MapServer"
+NATENV_BASE_URL = "https://services.thelist.tas.gov.au/arcgis/rest/services/Public/NaturalEnvironment/MapServer"
 
 LAYER_CODE_OVERLAYS = 14
 LAYER_GENERAL_OVERLAYS = 15
@@ -30,6 +33,16 @@ INFRA_LAYER_WATER = 1   # TasWater Water Serviced Land
 
 # Landslide layer (GeologicalAndSoils)
 GEO_LAYER_LANDSLIP = 23  # Landslide Planning Map - Hazard Bands
+
+# Heritage Register (HT_Public)
+HERITAGE_LAYER_THR = 0   # Tasmanian Heritage Register (state-level)
+
+# Building footprints (TopographyAndRelief)
+TOPO_LAYER_FOOTPRINTS = 35  # Building Footprints (polygon + MEAN_HGT)
+
+# EPA regulated/contaminated sites (NaturalEnvironment)
+NATENV_LAYER_EPA = 74       # EPA Regulated Sites (point)
+EPA_SEARCH_RADIUS_M = 300   # how far around the property to scan
 
 MOCK_DIR = os.path.join(os.path.dirname(__file__), "../../data/sample")
 
@@ -149,6 +162,24 @@ def _query_external_with_fallback(base_url: str, layer_id: int, lng: float, lat:
 _FLOOD_DEFAULT = {"in_flood_area": False, "depth_1pct_m": None, "hazard_1pct": None, "water_level_1pct_ahd": None}
 _TASWATER_DEFAULT = {"sewer_serviced": False, "water_serviced": False, "sewer_status": None, "water_status": None}
 _LANDSLIP_DEFAULT = {"in_landslip_band": False, "band": None, "exposure": None}
+_HERITAGE_DEFAULT = {"state_listed": False, "name": None, "status": None, "municipality": None}
+_COVERAGE_DEFAULT = {"building_area_sqm": None, "building_count": 0, "coverage_pct": None, "max_height_m": None}
+_EPA_DEFAULT = {"sites_nearby": 0, "radius_m": EPA_SEARCH_RADIUS_M, "sites": []}
+
+
+def _polygon_area_mga55(rings: list) -> float:
+    """Shoelace area (m²) for ArcGIS polygon rings in a metric CRS (MGA55).
+
+    Outer rings are positive (CW), holes negative (CCW); summing signed areas
+    nets out holes correctly.
+    """
+    total = 0.0
+    for ring in rings:
+        s = 0.0
+        for i in range(len(ring) - 1):
+            s += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1]
+        total += s / 2.0
+    return abs(total)
 
 
 def query_flood(lat: float, lng: float) -> dict:
@@ -251,6 +282,130 @@ def query_landslip(lat: float, lng: float) -> dict:
         return dict(_LANDSLIP_DEFAULT)
 
 
+def query_heritage(lat: float, lng: float) -> dict:
+    """Query the Tasmanian Heritage Register (state-level) at a WGS84 point.
+
+    Distinct from the local C6 heritage overlay (PlanningOnline). A hit means
+    the place is on the state THR — any works need Heritage Tasmania approval.
+    """
+    try:
+        features = _query_external_with_fallback(
+            HERITAGE_BASE_URL, HERITAGE_LAYER_THR, lng, lat,
+            "THR_NAME,REG_STATUS,MUNICIPALITY",
+        )
+        if not features:
+            return dict(_HERITAGE_DEFAULT)
+        f = features[0]
+        return {
+            "state_listed": True,
+            "name": f.get("THR_NAME"),
+            "status": f.get("REG_STATUS"),
+            "municipality": f.get("MUNICIPALITY"),
+        }
+    except Exception:
+        return dict(_HERITAGE_DEFAULT)
+
+
+def query_existing_coverage(lat: float, lng: float, lot_area_sqm: float | None = None) -> dict:
+    """Existing building site coverage — sum of building footprints on the parcel.
+
+    Fetches the parcel polygon (MGA55), finds all Building Footprints intersecting
+    it, sums their areas, and expresses as a % of lot area. Lets the agent answer
+    "how much more can I build" against the zone site-coverage standard.
+    """
+    try:
+        # 1. Parcel geometry in MGA55 (metric) for area maths
+        x, y = _wgs84_to_mga55.transform(lng, lat)
+        pr = requests.get(
+            f"{BASE_URL}/{LAYER_PARCELS}/query",
+            params={
+                "geometry": f"{x},{y}", "geometryType": "esriGeometryPoint", "inSR": "7855",
+                "spatialRel": "esriSpatialRelIntersects", "outFields": "COMP_AREA",
+                "returnGeometry": "true", "outSR": "7855", "f": "json",
+            }, timeout=15,
+        )
+        pdata = pr.json()
+        if not pdata.get("features"):
+            return dict(_COVERAGE_DEFAULT)
+        parcel = pdata["features"][0]
+        rings = parcel["geometry"]["rings"]
+        if lot_area_sqm is None:
+            lot_area_sqm = parcel["attributes"].get("COMP_AREA")
+
+        # 2. Building footprints intersecting the parcel
+        fr = requests.get(
+            f"{TOPO_BASE_URL}/{TOPO_LAYER_FOOTPRINTS}/query",
+            params={
+                "geometry": json.dumps({"rings": rings, "spatialReference": {"wkid": 7855}}),
+                "geometryType": "esriGeometryPolygon", "inSR": "7855",
+                "spatialRel": "esriSpatialRelIntersects", "outFields": "MEAN_HGT",
+                "returnGeometry": "true", "outSR": "7855", "f": "json",
+            }, timeout=15,
+        )
+        fdata = fr.json()
+        feats = fdata.get("features", [])
+        if not feats:
+            return {"building_area_sqm": 0, "building_count": 0,
+                    "coverage_pct": 0.0 if lot_area_sqm else None, "max_height_m": None}
+
+        building_area = 0.0
+        max_height = None
+        for f in feats:
+            building_area += _polygon_area_mga55(f["geometry"]["rings"])
+            h = f["attributes"].get("MEAN_HGT")
+            if h is not None:
+                try:
+                    max_height = max(max_height or 0.0, float(h))
+                except (TypeError, ValueError):
+                    pass
+
+        coverage_pct = None
+        if lot_area_sqm:
+            coverage_pct = round(building_area / float(lot_area_sqm) * 100, 1)
+
+        return {
+            "building_area_sqm": round(building_area),
+            "building_count": len(feats),
+            "coverage_pct": coverage_pct,
+            "max_height_m": round(max_height, 1) if max_height else None,
+        }
+    except Exception:
+        return dict(_COVERAGE_DEFAULT)
+
+
+def query_epa_sites(lat: float, lng: float, radius_m: int = EPA_SEARCH_RADIUS_M) -> dict:
+    """EPA regulated/contaminated sites within radius_m of the property.
+
+    Point layer — uses an envelope (~radius_m box) intersect rather than a
+    point-in-polygon. Flags nearby contamination risk for due diligence.
+    """
+    try:
+        d_deg = radius_m / 111000.0  # rough metres→degrees at Tas latitude
+        envelope = {
+            "xmin": lng - d_deg, "ymin": lat - d_deg,
+            "xmax": lng + d_deg, "ymax": lat + d_deg,
+            "spatialReference": {"wkid": 4326},
+        }
+        r = requests.get(
+            f"{NATENV_BASE_URL}/{NATENV_LAYER_EPA}/query",
+            params={
+                "geometry": json.dumps(envelope), "geometryType": "esriGeometryEnvelope",
+                "inSR": "4326", "spatialRel": "esriSpatialRelIntersects",
+                "outFields": "PREMISES_NAME,ACTIVITY_CATEGORY", "returnGeometry": "false", "f": "json",
+            }, timeout=15,
+        )
+        data = r.json()
+        feats = data.get("features", [])
+        sites = [
+            {"name": f["attributes"].get("PREMISES_NAME"),
+             "category": f["attributes"].get("ACTIVITY_CATEGORY")}
+            for f in feats
+        ]
+        return {"sites_nearby": len(sites), "radius_m": radius_m, "sites": sites[:10]}
+    except Exception:
+        return dict(_EPA_DEFAULT)
+
+
 def query_overlays(lat: float, lng: float) -> dict:
     """Query theLIST planning overlays, zone, and council for a WGS84 point."""
     if os.getenv("USE_MOCK_DATA") == "true":
@@ -331,6 +486,9 @@ def query_overlays(lat: float, lng: float) -> dict:
     flood = query_flood(lat, lng)
     taswater = query_taswater(lat, lng)
     landslip = query_landslip(lat, lng)
+    heritage = query_heritage(lat, lng)
+    coverage = query_existing_coverage(lat, lng, lot_area_sqm)
+    epa = query_epa_sites(lat, lng)
 
     return {
         "council": council,
@@ -341,6 +499,9 @@ def query_overlays(lat: float, lng: float) -> dict:
         "flood": flood,
         "taswater": taswater,
         "landslip": landslip,
+        "heritage_register": heritage,
+        "existing_coverage": coverage,
+        "epa_sites": epa,
     }
 
 
@@ -367,4 +528,7 @@ def _load_mock() -> dict:
         "flood": dict(_FLOOD_DEFAULT),
         "taswater": dict(_TASWATER_DEFAULT),
         "landslip": dict(_LANDSLIP_DEFAULT),
+        "heritage_register": dict(_HERITAGE_DEFAULT),
+        "existing_coverage": dict(_COVERAGE_DEFAULT),
+        "epa_sites": dict(_EPA_DEFAULT),
     }
