@@ -78,24 +78,16 @@ def retrieve(
         embedding = _embed_query(query)
         collection = _get_collection()
 
-        vector_search = {
-            "index": "vector_index",
-            "path": "embedding",
-            "queryVector": embedding,
-            "numCandidates": top_k * 10,
-            "limit": top_k,
-        }
-
-        filters = []
-        if council:
-            filters.append({"$or": [{"council": council}, {"council": "statewide"}]})
-        if overlay_code:
-            filters.append({"overlay_code": overlay_code})
-        if filters:
-            vector_search["filter"] = {"$and": filters} if len(filters) > 1 else filters[0]
-
+        # Fetch more candidates then post-filter — avoids filter fields in index definition
+        fetch_k = top_k * 20
         pipeline = [
-            {"$vectorSearch": vector_search},
+            {"$vectorSearch": {
+                "index": "vector_index",
+                "path": "embedding",
+                "queryVector": embedding,
+                "numCandidates": fetch_k,
+                "limit": fetch_k,
+            }},
             {"$project": {
                 "_id": 0,
                 "clause_ref": 1,
@@ -110,6 +102,14 @@ def retrieve(
         ]
 
         results = list(collection.aggregate(pipeline))
+
+        # Post-filter by council / overlay_code
+        if council:
+            results = [r for r in results if r.get("council") in (council, "statewide")]
+        if overlay_code:
+            results = [r for r in results if r.get("overlay_code") == overlay_code]
+
+        results = results[:top_k]
         if results:
             return results
         # Vector search returned nothing — try keyword fallback

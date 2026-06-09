@@ -388,8 +388,8 @@ export default function Home() {
               }}
               className={`inline-flex items-center gap-0.5 border rounded px-1.5 py-0.5 text-[10px] font-mono font-bold mx-1 cursor-pointer transition-all duration-200 shadow-sm ${
                 isHighlighted 
-                  ? "bg-brand-accent text-slate-900 border-brand-accent scale-105 ring-2 ring-brand-primary/20" 
-                  : "bg-brand-primary/10 hover:bg-brand-primary/20 text-brand-primary border-brand-primary/25"
+                  ? "bg-cta text-white border-cta scale-105 ring-2 ring-brand-primary/20"
+                  : "bg-brand-tint hover:bg-brand-primary/20 text-brand-primary border-brand-primary/25"
               }`}
             >
               {citationRaw} 📖
@@ -694,7 +694,7 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={loading || !address.trim()}
-                className="w-full bg-brand-primary hover:bg-[#386b82] active:bg-brand-primary disabled:bg-slate-300 text-white font-semibold py-3 px-4 rounded-lg text-sm transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full bg-brand-primary hover:bg-brand-hover active:bg-brand-primary disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold py-3 px-4 rounded-lg text-sm transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
                 {loading ? (
                   <>
@@ -1075,12 +1075,12 @@ export default function Home() {
                     key={idx} 
                     className={`p-4 rounded-xl border transition-all duration-300 space-y-3 relative ${
                       isHighlighted 
-                        ? "bg-slate-50/50 border-brand-accent shadow-sm ring-2 ring-brand-accent/20" 
+                        ? "bg-brand-tint border-brand-primary shadow-sm ring-2 ring-brand-primary/20"
                         : "bg-slate-50/20 border-slate-200"
                     }`}
                   >
                     {isHighlighted && (
-                      <span className="absolute top-2 right-2 bg-brand-accent text-slate-900 text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase">
+                      <span className="absolute top-2 right-2 bg-cta text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase">
                         Selected
                       </span>
                     )}
@@ -1107,7 +1107,7 @@ export default function Home() {
                           href={doc.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="w-full bg-brand-primary hover:bg-[#386b82] text-white text-center font-bold text-[10px] py-2 px-3 rounded-lg transition-colors inline-block"
+                          className="w-full bg-brand-primary hover:bg-brand-hover text-white text-center font-bold text-[10px] py-2 px-3 rounded-lg transition-colors inline-block"
                         >
                           Download Reference PDF ↗
                         </a>

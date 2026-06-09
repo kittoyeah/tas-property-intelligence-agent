@@ -1,0 +1,59 @@
+/*
+ * SiteCheck Design Tokens
+ * Grounded in the Tasmanian Government corporate colour system.
+ * Primary brand blue (#005A96) is the official Tas Govt blue.
+ * Supplementary palette reflects Tasmanian land, coast, and sky.
+ *
+ * Source: https://www.tas.gov.au/communications/identity/corporate-brand-identity-elements/corporate-colour
+ */
+
+:root {
+  /* ── Brand ─────────────────────────────────── */
+  --sc-brand:        #005A96;   /* Tas Govt official blue */
+  --sc-brand-hover:  #004A7F;
+  --sc-brand-active: #003A63;
+  --sc-brand-tint:   #E8F3FB;   /* ~8% brand on white */
+  --sc-brand-dark:   #002C4E;   /* header / footer */
+
+  /* ── CTA (action / submit) ──────────────────── */
+  --sc-cta:          #D9600A;   /* warm ochre — Tasmanian earth tones */
+  --sc-cta-hover:    #B84D07;
+  --sc-cta-tint:     #FEF0E6;
+
+  /* ── Surface & layout ───────────────────────── */
+  --sc-bg:           #F4F6F9;
+  --sc-surface:      #FFFFFF;
+  --sc-border:       #DDE3EA;
+  --sc-border-strong:#B0BEC9;
+
+  /* ── Text ───────────────────────────────────── */
+  --sc-text:         #0D1B2A;
+  --sc-text-soft:    #445566;
+  --sc-text-muted:   #7A8FA0;
+  --sc-text-inverse: #FFFFFF;
+
+  /* ── Status: Hazard ─────────────────────────── */
+  --sc-hazard:       #C0392B;
+  --sc-hazard-hover: #A82B1E;
+  --sc-hazard-tint:  #FDECEA;
+  --sc-hazard-border:#F5C6C2;
+
+  /* ── Status: Heritage / Warning ─────────────── */
+  --sc-heritage:        #8A5C00;
+  --sc-heritage-tint:   #FEF8E7;
+  --sc-heritage-border: #F0D080;
+
+  /* ── Status: Clear / Safe ───────────────────── */
+  --sc-clear:        #1E6E3C;
+  --sc-clear-tint:   #EDFAF2;
+  --sc-clear-border: #A3D9B8;
+
+  /* ── Status: Info / Zone ────────────────────── */
+  --sc-info:         #005A96;   /* reuse brand */
+  --sc-info-tint:    #E8F3FB;
+  --sc-info-border:  #9AC5E8;
+
+  /* ── Focus ring ─────────────────────────────── */
+  --sc-focus:        #005A96;
+  --sc-focus-offset: 2px;
+}

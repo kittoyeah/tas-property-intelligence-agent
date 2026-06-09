@@ -1,89 +1,106 @@
 @import "tailwindcss";
+@import "../styles/tokens.css";
 
 @theme {
   --font-sans: var(--font-montserrat), sans-serif;
-  
-  --color-brand-primary: #2b5567;
-  --color-brand-secondary: #1d374b;
-  --color-brand-accent: #fdd203;
-  --color-accent-mint: #b8e1da;
-  --color-accent-red: #b60000;
-  --color-focus-blue: #4d90fe;
-  --color-focus-gold: #ffbf47;
-  --color-bg-light: #eeeeee;
-  
-  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  --animate-fade-in: fadeIn 0.4s ease-out forwards;
-  --animate-slide-up: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  --animate-slide-in-right: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+
+  /* ── Brand (maps sc-* tokens → Tailwind utilities) ── */
+  --color-brand-primary:   var(--sc-brand);
+  --color-brand-hover:     var(--sc-brand-hover);
+  --color-brand-active:    var(--sc-brand-active);
+  --color-brand-tint:      var(--sc-brand-tint);
+  --color-brand-secondary: var(--sc-brand-dark);
+
+  /* ── CTA ── */
+  --color-cta:             var(--sc-cta);
+  --color-cta-hover:       var(--sc-cta-hover);
+  --color-cta-tint:        var(--sc-cta-tint);
+
+  /* ── Status ── */
+  --color-accent-red:      var(--sc-hazard);
+  --color-accent-heritage: var(--sc-heritage);
+  --color-accent-clear:    var(--sc-clear);
+  --color-accent-info:     var(--sc-info);
+
+  /* ── Surface / text ── */
+  --color-bg-page:         var(--sc-bg);
+  --color-surface:         var(--sc-surface);
+  --color-border:          var(--sc-border);
+  --color-text:            var(--sc-text);
+  --color-text-soft:       var(--sc-text-soft);
+  --color-text-muted:      var(--sc-text-muted);
+
+  /* ── Animations ── */
+  --animate-pulse-slow:    pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-fade-in:       fadeIn 0.4s ease-out forwards;
+  --animate-slide-up:      slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-slide-in-right:slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes fadeIn {
   from { opacity: 0; }
-  to { opacity: 1; }
+  to   { opacity: 1; }
 }
 
 @keyframes slideUp {
   from { transform: translateY(10px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  to   { transform: translateY(0);    opacity: 1; }
 }
 
 @keyframes slideInRight {
   from { transform: translateX(30px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  to   { transform: translateX(0);    opacity: 1; }
 }
 
 :root {
-  --background: #f8fafc;
-  --foreground: #1e293b;
+  background: var(--sc-bg);
+  color:      var(--sc-text);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--sc-bg);
+  color:      var(--sc-text);
 }
 
-/* Custom PlanBuild Styling Utilities */
-
-/* Inset Outline Card Pattern */
+/* ── Card (inset outline) ───────────────────────────────── */
 .planbuild-card {
-  position: relative;
-  background: #ffffff;
-  outline: 5px solid var(--color-brand-primary);
-  outline-offset: -0.35rem;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position:   relative;
+  background: var(--sc-surface);
+  outline:    4px solid var(--sc-brand);
+  outline-offset: -0.3rem;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .planbuild-card:hover {
-  outline-color: #ad9f3a;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  outline-color: var(--sc-brand-hover);
+  box-shadow: 0 8px 24px -4px rgba(0, 90, 150, 0.12);
 }
 
-/* PlanBuild Styled Warning/Info blockquote */
+/* ── Warning blockquote (heritage / general) ────────────── */
 .planbuild-blockquote {
-  background: linear-gradient(270deg, #fffef7 0%, rgba(253, 210, 3, 0.03) 100%);
-  border: solid 1.5px var(--color-brand-accent);
-  border-left: solid 6px var(--color-brand-accent);
-  padding: 1.25rem 1.5rem;
-  border-radius: 4px;
+  background:   linear-gradient(270deg, #FFFEF7 0%, rgba(138, 92, 0, 0.04) 100%);
+  border:       1.5px solid var(--sc-heritage-border);
+  border-left:  5px solid var(--sc-heritage);
+  padding:      1.125rem 1.375rem;
+  border-radius:4px;
 }
 
-/* PlanBuild Styled Error/Hazard blockquote */
+/* ── Hazard blockquote (flood / bushfire / landslip) ─────── */
 .planbuild-hazard-blockquote {
-  background: linear-gradient(270deg, #fffcfc 0%, rgba(182, 0, 0, 0.03) 100%);
-  border: solid 1.5px var(--color-accent-red);
-  border-left: solid 6px var(--color-accent-red);
-  padding: 1.25rem 1.5rem;
-  border-radius: 4px;
+  background:   linear-gradient(270deg, #FFFCFC 0%, rgba(192, 57, 43, 0.04) 100%);
+  border:       1.5px solid var(--sc-hazard-border);
+  border-left:  5px solid var(--sc-hazard);
+  padding:      1.125rem 1.375rem;
+  border-radius:4px;
 }
 
-/* Custom Input Focus Ring */
+/* ── Input focus ring ────────────────────────────────────── */
 .planbuild-input {
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .planbuild-input:focus {
-  outline: 3px solid var(--color-focus-gold);
+  outline:        3px solid var(--sc-focus);
   outline-offset: 0;
-  border-color: transparent;
+  border-color:   transparent;
 }

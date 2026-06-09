@@ -126,7 +126,8 @@ def index_chunks(chunks_path: str, council_filter: str | None = None, dry_run: b
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--chunks",  default="data/chunks/hobart-chunks.json")
-    parser.add_argument("--council", default="Hobart")
+    parser.add_argument("--council", default=None,
+                        help="Filter to this council (+ statewide). Omit to index all.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
